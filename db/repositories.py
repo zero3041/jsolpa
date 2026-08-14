@@ -72,6 +72,11 @@ _EXACT_KEYS: frozenset[str] = frozenset([
     "proxy.probe_endpoint", "proxy.probe_timeout", "proxy.max_tries",
     "proxy.sid_len", "proxy.sid_retry_per_line", "proxy.probe_concurrency",
     "mail_mode.current", "mail_mode.worker_config",
+    "mail_reader.max_messages",
+    "eventista.engine", "eventista.headless", "eventista.default_password",
+    "eventista.max_concurrent", "eventista.use_proxy", "eventista.captcha_mode",
+    "eventista.poll_timeout_seconds", "eventista.job_timeout",
+    "eventista.yescaptcha_key",
     "reg_mode.current",
     "session.mode", "upi.mode",
     "hme.runner.action", "hme.runner.count_per_cycle",
@@ -98,6 +103,7 @@ _SENSITIVE_KEYS: frozenset[str] = frozenset([
     "proxy.pool", "autoreg.api_key",
     "mail_mode.worker_config",
     "telegram.bot_token",
+    "eventista.yescaptcha_key",
     "web.auth_token",
 ])
 
@@ -269,6 +275,88 @@ def _validate_type_constraint(key: str, value: Any) -> None:
         if not (1 <= value <= 30):
             raise RepositoryError(
                 "set", ValueError(f"{key}: must be in [1, 30], got {value}")
+            )
+        return
+
+    # --- mail_reader namespace (Đọc Hòm Thư tab) ---
+    if key == "mail_reader.max_messages":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (1 <= value <= 50):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [1, 50], got {value}")
+            )
+        return
+
+    # --- eventista namespace (Reg Eventista tab) ---
+    if key == "eventista.engine":
+        if not isinstance(value, str) or value not in ("camoufox", "playwright", "chrome", "cloakbrowser"):
+            raise RepositoryError(
+                "set", ValueError(
+                    f"{key}: must be str in {{\"camoufox\",\"playwright\",\"chrome\",\"cloakbrowser\"}}, "
+                    f"got {value!r}"
+                )
+            )
+        return
+
+    if key == "eventista.headless":
+        if not isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be bool, got {type(value).__name__}")
+            )
+        return
+
+    if key == "eventista.default_password":
+        if value is not None and not isinstance(value, str):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be str or null, got {type(value).__name__}")
+            )
+        return
+
+    if key == "eventista.max_concurrent":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (1 <= value <= 30):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [1, 30], got {value}")
+            )
+        return
+
+    if key == "eventista.use_proxy":
+        if not isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be bool, got {type(value).__name__}")
+            )
+        return
+
+    if key == "eventista.captcha_mode":
+        if not isinstance(value, str) or value not in ("auto", "click", "yescaptcha", "ezsolver", "camoufox", "inpage", "none"):
+            raise RepositoryError(
+                "set", ValueError(
+                    f"{key}: must be str in {{\"auto\",\"click\",\"yescaptcha\",\"ezsolver\",\"camoufox\",\"inpage\",\"none\"}}, got {value!r}"
+                )
+            )
+        return
+
+    if key in ("eventista.poll_timeout_seconds", "eventista.job_timeout"):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (30 <= value <= 3600):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [30, 3600], got {value}")
+            )
+        return
+
+    if key == "eventista.yescaptcha_key":
+        if value is not None and not isinstance(value, str):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be str or null, got {type(value).__name__}")
             )
         return
 
@@ -693,7 +781,7 @@ def _validate_type_constraint(key: str, value: Any) -> None:
 
     # --- ui namespace ---
     if key == "ui.active_tab":
-        allowed_tabs = ("reg", "session", "link", "hme", "upi", "settings")
+        allowed_tabs = ("reg", "session", "link", "hme", "upi", "eventista", "settings")
         if not isinstance(value, str) or value not in allowed_tabs:
             raise RepositoryError(
                 "set", ValueError(f"{key}: must be str in {set(allowed_tabs)}, got {value!r}")
@@ -1027,6 +1115,46 @@ class ComboRepository:
             raise
         except Exception as exc:
             raise RepositoryError("set_persona_cookies", exc) from exc
+
+    # ─── Eventista tag (Reg Eventista tab, v13) ───
+
+    def list_untagged_eventista(self) -> list[dict]:
+        """List combo chưa dùng cho Eventista (tag_eventista=0).
+
+        Sắp theo created_at ASC (lấy combo cũ nhất trước). KHÔNG lọc theo
+        used_for_signup — combo đã signup ChatGPT vẫn có thể đăng ký Eventista.
+        """
+        conn = self._engine.raw_connection()
+        rows = conn.execute(
+            "SELECT * FROM outlook_combos WHERE tag_eventista = 0 ORDER BY created_at ASC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_eventista_used(self, email: str) -> None:
+        """Đánh dấu combo đã được dùng cho Eventista (activated).
+
+        Raises:
+            RepositoryError: Nếu write operation fail hoặc row không tồn tại.
+        """
+        try:
+            with self._engine.get_connection() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE outlook_combos
+                    SET tag_eventista = 1
+                    WHERE email = ?
+                    """,
+                    (email,),
+                )
+                if cursor.rowcount == 0:
+                    raise RepositoryError(
+                        "mark_eventista_used",
+                        ValueError(f"no row found for email={email}"),
+                    )
+        except RepositoryError:
+            raise
+        except Exception as exc:
+            raise RepositoryError("mark_eventista_used", exc) from exc
 
 
 # --- SessionResultRepository ---
@@ -2785,6 +2913,133 @@ class ChatGptAccountRepository:
             (limit,),
         ).fetchall()
         return [row["email"] for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# EventistaAccountRepository — Reg Eventista tab (v13)
+# ---------------------------------------------------------------------------
+
+
+class EventistaAccountRepository:
+    """Data access cho `eventista_accounts` table.
+
+    Lưu trạng thái đăng ký tài khoản trên site tinhhasayhi.1vote.vn:
+    pending → registering → registered → activated / failed.
+    """
+
+    def __init__(self, engine: "DatabaseEngine") -> None:
+        self._engine = engine
+
+    def upsert(
+        self,
+        email: str,
+        password: str,
+        *,
+        status: str = "pending",
+        error: str | None = None,
+        activation_url: str | None = None,
+        engine: str | None = None,
+        proxy_used: str | None = None,
+    ) -> None:
+        """Insert hoặc update row theo email (UNIQUE).
+
+        Raises:
+            RepositoryError: Nếu write fail.
+        """
+        try:
+            with self._engine.get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO eventista_accounts
+                        (email, password, status, error, activation_url, engine, proxy_used,
+                         updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                    ON CONFLICT(email) DO UPDATE SET
+                        password = excluded.password,
+                        status = excluded.status,
+                        error = excluded.error,
+                        activation_url = excluded.activation_url,
+                        engine = excluded.engine,
+                        proxy_used = excluded.proxy_used,
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    """,
+                    (email, password, status, error, activation_url, engine, proxy_used),
+                )
+        except Exception as exc:
+            raise RepositoryError("eventista_upsert", exc) from exc
+
+    def update_status(
+        self,
+        email: str,
+        status: str,
+        *,
+        error: str | None = None,
+        activation_url: str | None = None,
+    ) -> None:
+        """Update status (và optional error / activation_url) theo email.
+
+        Raises:
+            RepositoryError: Nếu row không tồn tại hoặc write fail.
+        """
+        try:
+            with self._engine.get_connection() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE eventista_accounts
+                    SET status = ?,
+                        error = ?,
+                        activation_url = COALESCE(?, activation_url),
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    WHERE email = ?
+                    """,
+                    (status, error, activation_url, email),
+                )
+                if cursor.rowcount == 0:
+                    raise RepositoryError(
+                        "eventista_update_status",
+                        ValueError(f"no row found for email={email}"),
+                    )
+        except RepositoryError:
+            raise
+        except Exception as exc:
+            raise RepositoryError("eventista_update_status", exc) from exc
+
+    def list_all(self, *, limit: int = 200, offset: int = 0) -> list[dict]:
+        """List accounts mới nhất trước.
+
+        Args:
+            limit: Số row tối đa (default 200).
+            offset: Skip N row đầu.
+
+        Returns:
+            List dicts.
+        """
+        conn = self._engine.raw_connection()
+        rows = conn.execute(
+            "SELECT * FROM eventista_accounts ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_by_email(self, email: str) -> dict | None:
+        """Lấy account theo email."""
+        conn = self._engine.raw_connection()
+        row = conn.execute(
+            "SELECT * FROM eventista_accounts WHERE email = ?", (email,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def delete(self, email: str) -> bool:
+        """Xoá account theo email. True nếu row bị xoá."""
+        try:
+            with self._engine.get_connection() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM eventista_accounts WHERE email = ?", (email,)
+                )
+                return cursor.rowcount > 0
+        except Exception as exc:
+            raise RepositoryError("eventista_delete", exc) from exc
+
 
 # ---------------------------------------------------------------------------
 # SettingsRepository — Unified settings store (unified-settings-store spec)

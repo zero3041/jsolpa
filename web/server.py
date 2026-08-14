@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from .auth import get_token, require_token  # token-based auth
 from .manager import get_manager, get_session_manager, get_link_manager, get_upi_manager, set_sse_mux
+from .eventista import get_eventista_manager
 from .mail_modes import get_registry, serialize_for_api
 from .sse_mux import SseMux
 from payment_link import REGION_BILLING
@@ -146,6 +147,8 @@ async def on_startup():
     get_link_manager(job_repo=job_repo)
     # UPI manager — in-memory only, không cần job_repo.
     get_upi_manager()
+    # Eventista manager — in-memory only, không cần job_repo.
+    get_eventista_manager()
 
     # Hydrate managers với settings từ DB (R9.1, R9.2, R9.3)
     # Workers đã được schedule bởi _ensure_workers() nhưng chưa execute
@@ -154,6 +157,7 @@ async def on_startup():
     get_session_manager().apply_settings(all_settings)
     get_link_manager().apply_settings(all_settings)
     get_upi_manager().apply_settings(all_settings)
+    get_eventista_manager().apply_settings(all_settings)
     # Telegram notifier — hydrate config (token/chat_id/notify toggle) từ DB.
     from .telegram_notifier import get_telegram_notifier
     get_telegram_notifier().apply_settings(all_settings)
@@ -219,6 +223,19 @@ async def on_startup():
         "restart_threshold": um.restart_threshold,
         "max_restarts": um.max_restarts,
         "jobs": um.list_jobs(),
+    }])
+
+    em = get_eventista_manager()
+    _sse_mux.register_snapshot("eventista", lambda: [{
+        "type": "snapshot",
+        "max_concurrent": em.max_concurrent,
+        "job_timeout": em.job_timeout,
+        "engine": em.engine,
+        "headless": em.headless,
+        "use_proxy": em.use_proxy,
+        "captcha_mode": em.captcha_mode,
+        "poll_timeout_seconds": em.poll_timeout_seconds,
+        "jobs": em.list_jobs(),
     }])
 
     def _hme_log_snapshot() -> list[dict]:
@@ -641,6 +658,48 @@ async def set_config(payload: SetConfigRequest) -> JSONResponse:
 async def list_mail_modes() -> JSONResponse:
     """Trả danh sách mail modes cho UI render selector + config panels."""
     return JSONResponse({"modes": serialize_for_api()})
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Mail Reader (Đọc Hòm Thư — check combo sống/chết + đọc thư)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class MailReaderCheckRequest(BaseModel):
+    combos: str = Field(
+        ...,
+        description="Mỗi dòng 1 combo: email|password|refresh_token|client_id.",
+    )
+    max_messages: int = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description="Số thư tối đa lấy về cho mỗi account (Graph $top, cap 50).",
+    )
+    concurrency: int = Field(
+        default=10,
+        ge=1,
+        le=30,
+        description="Số combo check song song.",
+    )
+
+
+@app.post("/api/mail-reader/check")
+async def mail_reader_check(payload: MailReaderCheckRequest) -> JSONResponse:
+    """Check danh sách combo Outlook: refresh token + đọc thư mới nhất.
+
+    Mỗi account trả status: alive (token OK, đọc được thư), dead (token lỗi
+    vĩnh viễn — invalid_grant/expired/disabled), network_error (không kết
+    luận được do network). Không persist token (check-only).
+    """
+    from .mail_reader import check_many
+
+    result = await check_many(
+        payload.combos,
+        max_messages=payload.max_messages,
+        concurrency=payload.concurrency,
+    )
+    return JSONResponse(result)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -2253,6 +2312,200 @@ async def notify_upi_job(job_id: str) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"{type(exc).__name__}: {exc}")
     return JSONResponse({"ok": True})
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Reg Eventista (thsh site signup)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class AddEventistaJobsRequest(BaseModel):
+    combos: str = Field(..., description="Textarea content, 1 combo/l dòng (email|password|refresh_token|client_id).")
+
+
+class SetEventistaConfigRequest(BaseModel):
+    max_concurrent: int | None = Field(default=None, ge=1, le=30)
+    job_timeout: float | None = Field(default=None, ge=30, le=3600)
+    engine: str | None = Field(default=None)
+    headless: bool | None = Field(default=None)
+    default_password: str | None = Field(default=None)
+    use_proxy: bool | None = Field(default=None)
+    captcha_mode: str | None = Field(default=None)
+    poll_timeout_seconds: float | None = Field(default=None, ge=30, le=3600)
+    yescaptcha_key: str | None = Field(default=None)
+
+
+@app.get("/api/eventista/jobs")
+async def list_eventista_jobs() -> JSONResponse:
+    em = get_eventista_manager()
+    return JSONResponse({
+        "max_concurrent": em.max_concurrent,
+        "job_timeout": em.job_timeout,
+        "engine": em.engine,
+        "headless": em.headless,
+        "use_proxy": em.use_proxy,
+        "captcha_mode": em.captcha_mode,
+        "poll_timeout_seconds": em.poll_timeout_seconds,
+        "jobs": em.list_jobs(),
+    })
+
+
+@app.post("/api/eventista/jobs")
+async def add_eventista_jobs(payload: AddEventistaJobsRequest) -> JSONResponse:
+    combos = payload.combos.splitlines()
+    em = get_eventista_manager()
+    jobs = em.add_jobs(combos)
+    return JSONResponse({"added": len(jobs), "jobs": [j.to_dict() for j in jobs]})
+
+
+# ── Static actions — đăng ký TRƯỚC routes {job_id} (FastAPI match theo thứ tự) ──
+
+
+@app.post("/api/eventista/jobs/stop-all")
+async def stop_all_eventista_jobs() -> JSONResponse:
+    em = get_eventista_manager()
+    stopped = await em.stop_all()
+    return JSONResponse({"stopped": stopped})
+
+
+@app.post("/api/eventista/jobs/clear-finished")
+async def clear_finished_eventista_jobs() -> JSONResponse:
+    em = get_eventista_manager()
+    removed = em.clear_finished()
+    return JSONResponse({"removed": removed})
+
+
+@app.post("/api/eventista/jobs/clear-all")
+async def clear_all_eventista_jobs() -> JSONResponse:
+    em = get_eventista_manager()
+    removed = em.clear_all()
+    return JSONResponse({"removed": removed})
+
+
+@app.post("/api/eventista/jobs/retry-failed")
+async def retry_failed_eventista_jobs() -> JSONResponse:
+    em = get_eventista_manager()
+    retried = await em.retry_failed()
+    return JSONResponse({"retried": retried})
+
+
+@app.get("/api/eventista/outputs")
+async def get_eventista_outputs() -> JSONResponse:
+    em = get_eventista_manager()
+    return JSONResponse(em.list_outputs())
+
+
+# ── Per-job routes ──
+
+
+@app.get("/api/eventista/jobs/{job_id}")
+async def get_eventista_job(job_id: str) -> JSONResponse:
+    em = get_eventista_manager()
+    data = em.get_job(job_id)
+    if data is None:
+        raise HTTPException(404, "job not found")
+    return JSONResponse(data)
+
+
+@app.post("/api/eventista/jobs/{job_id}/retry")
+async def retry_eventista_job(job_id: str) -> JSONResponse:
+    em = get_eventista_manager()
+    if job_id not in em.jobs:
+        raise HTTPException(404, "job not found")
+    ok = em.retry_job(job_id)
+    return JSONResponse({"ok": ok})
+
+
+@app.delete("/api/eventista/jobs/{job_id}")
+async def delete_eventista_job(job_id: str) -> JSONResponse:
+    em = get_eventista_manager()
+    ok = em.remove_job(job_id)
+    if not ok:
+        raise HTTPException(404, "job not found")
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/eventista/config")
+async def get_eventista_config() -> JSONResponse:
+    em = get_eventista_manager()
+    return JSONResponse(em.to_config_dict())
+
+
+@app.post("/api/eventista/config")
+async def set_eventista_config(payload: SetEventistaConfigRequest) -> JSONResponse:
+    em = get_eventista_manager()
+    settings_writes: dict[str, Any] = {}
+    if payload.max_concurrent is not None:
+        em.set_max_concurrent(payload.max_concurrent)
+        settings_writes["eventista.max_concurrent"] = payload.max_concurrent
+    if payload.job_timeout is not None:
+        em.set_job_timeout(payload.job_timeout)
+        settings_writes["eventista.job_timeout"] = payload.job_timeout
+    if payload.engine is not None:
+        try:
+            em.set_engine(payload.engine)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        settings_writes["eventista.engine"] = payload.engine
+    if payload.headless is not None:
+        em.set_headless(payload.headless)
+        settings_writes["eventista.headless"] = payload.headless
+    if payload.default_password is not None:
+        em.set_default_password(payload.default_password)
+        settings_writes["eventista.default_password"] = em.default_password
+    if payload.use_proxy is not None:
+        em.set_use_proxy(payload.use_proxy)
+        settings_writes["eventista.use_proxy"] = payload.use_proxy
+    if payload.captcha_mode is not None:
+        try:
+            em.set_captcha_mode(payload.captcha_mode)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        settings_writes["eventista.captcha_mode"] = payload.captcha_mode
+    if payload.poll_timeout_seconds is not None:
+        em.set_poll_timeout(payload.poll_timeout_seconds)
+        settings_writes["eventista.poll_timeout_seconds"] = payload.poll_timeout_seconds
+    if payload.yescaptcha_key is not None:
+        em.set_yescaptcha_key(payload.yescaptcha_key)
+        settings_writes["eventista.yescaptcha_key"] = em.yescaptcha_key
+    if settings_writes:
+        try:
+            _get_settings_repo().bulk_set(settings_writes)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("Eventista config write-through failed: %s", exc)
+    return JSONResponse(em.to_config_dict())
+
+
+@app.get("/api/eventista/combos")
+async def list_eventista_combos() -> JSONResponse:
+    """List combo Outlook chưa dùng cho Eventista (tag_eventista=0)."""
+    from db import get_combo_repo, get_engine
+
+    repo = get_combo_repo(get_engine())
+    rows = repo.list_untagged_eventista()
+    return JSONResponse({"combos": rows})
+
+
+@app.get("/api/eventista/accounts")
+async def list_eventista_accounts() -> JSONResponse:
+    """List lịch sử account Eventista (từ DB)."""
+    from db import get_eventista_repo, get_engine
+
+    repo = get_eventista_repo(get_engine())
+    rows = repo.list_all()
+    return JSONResponse({"accounts": rows})
+
+
+@app.delete("/api/eventista/accounts/{email:path}")
+async def delete_eventista_account(email: str) -> JSONResponse:
+    """Xoá account Eventista khỏi DB (theo email)."""
+    from db import get_eventista_repo, get_engine
+
+    repo = get_eventista_repo(get_engine())
+    removed = repo.delete(email)
+    if not removed:
+        raise HTTPException(404, "account not found")
+    return JSONResponse({"removed": True})
 
 
 # Mount static folder cho CSS/JS

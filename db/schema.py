@@ -1,7 +1,7 @@
 """Schema definitions — DDL strings và version management cho SQLite persistence layer."""
 
 # Schema version hiện tại. Tăng khi có thay đổi DDL.
-CURRENT_VERSION = 12
+CURRENT_VERSION = 13
 
 # --- DDL: Schema version tracking ---
 
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS outlook_combos (
     used_at TEXT,
     last_refresh_at TEXT,
     persona_cookies TEXT,
+    tag_eventista INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -258,6 +259,30 @@ DDL_SETTINGS_INDEXES = """\
 CREATE INDEX IF NOT EXISTS idx_settings_key ON settings(key);
 """
 
+# --- v13: Eventista accounts (Reg Eventista tab) ---
+# Lưu kết quả đăng ký tài khoản trên site tinhhasayhi.1vote.vn.
+# status lifecycle: pending → registering → registered → activated / failed.
+
+DDL_EVENTISTA_ACCOUNTS = """\
+CREATE TABLE IF NOT EXISTS eventista_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'registering', 'registered', 'activated', 'failed')),
+    error TEXT,
+    activation_url TEXT,
+    engine TEXT,
+    proxy_used TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+"""
+
+DDL_EVENTISTA_ACCOUNTS_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_eventista_accounts_status ON eventista_accounts(status);
+"""
+
 # --- Ordered list tất cả DDL statements cho migration ---
 
 ALL_DDL: list[str] = [
@@ -287,6 +312,9 @@ ALL_DDL: list[str] = [
     # --- v10: Settings key-value store ---
     DDL_SETTINGS,
     DDL_SETTINGS_INDEXES,
+    # --- v13: Eventista accounts ---
+    DDL_EVENTISTA_ACCOUNTS,
+    DDL_EVENTISTA_ACCOUNTS_INDEXES,
 ]
 """Danh sách DDL theo thứ tự thực thi. Engine sẽ chạy lần lượt trong 1 transaction."""
 
@@ -588,5 +616,18 @@ MIGRATIONS: dict[int, list[str]] = {
     # Empty (NULL) = combo chưa từng login thành công, không có history.
     12: [
         "ALTER TABLE outlook_combos ADD COLUMN persona_cookies TEXT;",
+    ],
+    # v13: Reg Eventista tab (thsh site signup).
+    #
+    # 1. outlook_combos: thêm cột tag_eventista — đánh dấu combo đã được dùng
+    #    cho Eventista (activated). Fresh DB đã có cột qua DDL_OUTLOOK_COMBOS.
+    # 2. eventista_accounts: bảng mới lưu kết quả đăng ký/activation.
+    #
+    # Note: MIGRATIONS[v] chạy tuần tự với existing DB; nếu DB đã có sẵn cột
+    # (vd thủ công) thì ALTER sẽ fail → migration fail-fast như các version cũ.
+    13: [
+        "ALTER TABLE outlook_combos ADD COLUMN tag_eventista INTEGER NOT NULL DEFAULT 0;",
+        DDL_EVENTISTA_ACCOUNTS,
+        DDL_EVENTISTA_ACCOUNTS_INDEXES,
     ],
 }

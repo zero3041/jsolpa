@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from .engine import DatabaseEngine
     from .repositories import (
         ComboRepository,
+        EventistaAccountRepository,
         JobRepository,
         SessionResultRepository,
         SettingsRepository,
@@ -92,3 +93,25 @@ def get_settings_repo(engine: "DatabaseEngine") -> "SettingsRepository":
     from .repositories import SettingsRepository
 
     return SettingsRepository(engine)
+
+
+def get_combo_repo(engine: "DatabaseEngine") -> "ComboRepository":
+    """Tạo và trả về ComboRepository instance.
+
+    Args:
+        engine: DatabaseEngine instance đã khởi tạo.
+    """
+    from .repositories import ComboRepository
+
+    return ComboRepository(engine)
+
+
+def get_eventista_repo(engine: "DatabaseEngine") -> "EventistaAccountRepository":
+    """Tạo và trả về EventistaAccountRepository instance.
+
+    Args:
+        engine: DatabaseEngine instance đã khởi tạo.
+    """
+    from .repositories import EventistaAccountRepository
+
+    return EventistaAccountRepository(engine)

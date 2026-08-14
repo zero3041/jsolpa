@@ -876,6 +876,11 @@ body {
   background: var(--bg-elev-2);
 }
 
+.job.selected {
+  background: var(--bg-elev-2);
+  border-color: var(--accent);
+}
+
 .job.is-active {
   background: var(--bg-elev-2);
   border-color: var(--accent);
@@ -927,6 +932,14 @@ body {
   text-overflow: ellipsis;
 }
 
+.job-detail {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
 .plan-badge {
   flex: 0 0 auto;
   font-family: var(--font-mono);
@@ -967,6 +980,32 @@ body {
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+/* Eventista không có cột job-index; nếu dùng grid chung, status/email bị lệch
+   lần lượt vào cột 26px/80px còn engine chiếm vùng chính. */
+#tab-eventista .job.eventista-job {
+  grid-template-columns: 80px minmax(0, 1fr) 72px auto;
+}
+
+/* Luôn giữ một gutter/track nhìn thấy để danh sách dài có thể cuộn trong OBS
+   và các cửa sổ không hiển thị scrollbar overlay. */
+#tab-eventista .card-jobs .job-list {
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+}
+
+#tab-eventista .card-jobs .job-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+#tab-eventista .card-jobs .job-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 2px solid var(--bg-elev);
+  border-radius: 999px;
 }
 
 .job-meta {
@@ -1101,6 +1140,45 @@ body {
 .output-pane::-webkit-scrollbar { width: 8px; }
 .log-pane::-webkit-scrollbar-thumb,
 .output-pane::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+/* Reg Eventista — live log dạng block: ● email / action / time */
+#ev-log-pane {
+  white-space: normal;
+  padding: 8px 12px;
+}
+.ev-log-entry {
+  padding: 4px 0 5px;
+  border-bottom: 1px dashed var(--border);
+}
+.ev-log-entry.err { border-bottom-color: var(--red); }
+.ev-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.ev-log-time {
+  font-weight: 400;
+  color: var(--fg-dim);
+  flex: 0 0 auto;
+}
+.ev-log-msg {
+  color: var(--fg);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.ev-log-entry.err .ev-log-msg { color: var(--red); }
+.ev-log-creds {
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--green);
+  white-space: pre-wrap;
+}
 
 .output-pane {
   font-size: 12px;

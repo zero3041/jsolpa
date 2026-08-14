@@ -22,6 +22,8 @@
     <button class="tab-btn active" data-tab="reg">Reg</button>
     <button class="tab-btn" data-tab="session">Get Session</button>
     <button class="tab-btn" data-tab="upi">UPI QR</button>
+    <button class="tab-btn" data-tab="mailread">Đọc Hòm Thư</button>
+    <button class="tab-btn" data-tab="eventista">Reg Eventista</button>
     <!-- TẠM ẨN: Get Link + HME chưa dùng được. Mở lại = bỏ comment 2 dòng dưới. -->
     <!-- <button class="tab-btn" data-tab="link">Get Link</button> -->
     <!-- <button class="tab-btn" data-tab="hme">HME</button> -->
@@ -329,6 +331,165 @@
       <button id="upi-btn-copy-error" class="btn btn-ghost btn-small">Copy All</button>
     </header>
     <pre id="upi-error-pane" class="output-pane">No errors yet.</pre>
+  </section>
+</main>
+
+<!-- ════════════════ TAB: ĐỌC HÒM THƯ (Mail Reader) ════════════════ -->
+<main class="grid tab-content" id="tab-mailread">
+  <section class="card card-input">
+    <header class="card-head">
+      <h2>Nhập tài khoản (Graph API / OAuth2)</h2>
+      <div class="card-head-actions">
+        <label class="input-group config-field-tiny" title="Số thư mới nhất hiển thị cho mỗi account">
+          <span class="input-label">Số thư tối đa</span>
+          <input type="number" id="mr-max-messages" value="10" min="1" max="50" step="1" />
+        </label>
+      </div>
+    </header>
+    <textarea class="combo-textarea" id="mr-combo-input" placeholder="user@hotmail.com|password123|M.C524_BAY.0.U.-xxxxx|9e5f94bc-xxxx-xxxx-xxxx-xxxxxxxxxxxx&#10;user2@outlook.com|pass456|M.C525_BAY.0.U.-yyyyy|8b4ba9dd-3ea5-4e5f-86f1-ddba2230dcf2" spellcheck="false"></textarea>
+    <div class="card-actions">
+      <button id="mr-btn-check" class="btn btn-primary">Đọc Mail</button>
+      <button id="mr-btn-clear-input" class="btn btn-ghost">Xóa</button>
+      <span class="muted" id="mr-combo-count">0 dòng</span>
+    </div>
+  </section>
+
+  <section class="card card-jobs">
+    <header class="card-head">
+      <h2>Kết quả check</h2>
+      <div class="card-head-actions">
+        <span id="mr-summary" class="muted">-</span>
+        <button id="mr-btn-copy-alive" class="btn btn-ghost btn-small" title="Copy danh sách account còn sống">Copy alive</button>
+        <button id="mr-btn-copy-dead" class="btn btn-ghost btn-small" title="Copy danh sách account chết">Copy dead</button>
+      </div>
+    </header>
+    <div id="mr-result-list" class="job-list">
+      <div class="empty">Dán combo và bấm "Đọc Mail" để check account còn sống không.</div>
+    </div>
+  </section>
+
+  <section class="card card-log">
+    <header class="card-head">
+      <h2>Thư mới nhất</h2>
+      <span class="muted" id="mr-mail-target">-</span>
+    </header>
+    <pre id="mr-mail-pane" class="log-pane"></pre>
+  </section>
+</main>
+
+<!-- ════════════════ TAB: REG EVENTISTA ════════════════ -->
+<main class="grid tab-content" id="tab-eventista">
+  <section class="card card-input">
+    <header class="card-head">
+      <h2>Đăng ký Eventista (tinhhasayhi.1vote.vn)</h2>
+      <div class="card-head-actions">
+        <button id="ev-btn-pick-combos" class="btn btn-ghost btn-small" title="Lấy combo chưa dùng Eventista từ DB vào ô nhập">Lấy combo từ DB</button>
+        <button id="ev-btn-clear-input" class="btn btn-ghost btn-small">Clear Input</button>
+      </div>
+    </header>
+    <textarea class="combo-textarea" id="ev-combo-input" placeholder="email1@hotmail.com|pwd1|M.C548...|9e5f94bc-...&#10;email2@outlook.com|pwd2|M.C525...|9e5f94bc-..." spellcheck="false"></textarea>
+    <div class="card-settings">
+      <div class="card-settings-row card-settings-row-mixed">
+        <label class="input-group config-field-mode">
+          <span class="input-label">Engine</span>
+          <select id="ev-engine">
+            <option value="chrome">Chrome thật (Turnstile pass)</option>
+            <option value="camoufox">Camoufox (anti-detect)</option>
+            <option value="playwright">Playwright Chromium</option>
+            <option value="cloakbrowser">CloakBrowser (pass Turnstile)</option>
+          </select>
+        </label>
+        <label class="input-group config-field-mode">
+          <span class="input-label">Captcha</span>
+          <select id="ev-captcha-mode">
+            <option value="camoufox">Camoufox-captcha (click trong shadow root)</option>
+            <option value="inpage">In-page (widget riêng cùng browser)</option>
+            <option value="auto">Auto (chờ widget tự solve)</option>
+            <option value="click">Click CF Turnstile (auto click)</option>
+            <option value="yescaptcha">YesCaptcha API</option>
+            <option value="ezsolver">EzSolver (Chrome thật local)</option>
+            <option value="none">None (bỏ qua)</option>
+          </select>
+        </label>
+        <label class="input-group config-field-short">
+          <span class="input-label">Concurrency</span>
+          <input type="number" id="ev-max-concurrent" value="1" min="1" max="30" step="1" />
+        </label>
+      </div>
+      <div class="card-settings-row card-settings-row-mixed">
+        <label class="input-group config-field-long">
+          <span class="input-label">Default password</span>
+          <input type="text" id="ev-default-password" placeholder="Blank = random (upper+lower+number+special)" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="input-group config-field-short" title="Thời gian poll hòm thư tìm email kích hoạt (giây)">
+          <span class="input-label">Poll mail (s)</span>
+          <input type="number" id="ev-poll-timeout" value="600" min="30" max="3600" step="30" />
+        </label>
+        <label class="input-group config-field-short">
+          <span class="input-label">Timeout job (s)</span>
+          <input type="number" id="ev-job-timeout" value="600" min="30" max="3600" step="30" />
+        </label>
+        <label class="input-group config-field-long">
+          <span class="input-label">YesCaptcha key</span>
+          <input type="password" id="ev-yescaptcha-key" placeholder="Chỉ cần khi Captcha = YesCaptcha API" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="toggle-wrap" title="Chạy qua proxy pool (Settings → Proxy)">
+          <input type="checkbox" id="ev-proxy-toggle" checked />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Proxy</span>
+        </label>
+        <label class="toggle-wrap" title="Ẩn cửa sổ trình duyệt">
+          <input type="checkbox" id="ev-headless-toggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Headless</span>
+        </label>
+      </div>
+    </div>
+    <div class="card-actions">
+      <button id="ev-btn-run" class="btn btn-primary">Run Eventista</button>
+      <button id="ev-btn-stop-all" class="btn btn-danger">Stop All</button>
+      <span class="muted" id="ev-combo-count">0 combos</span>
+    </div>
+  </section>
+
+  <section class="card card-jobs">
+    <header class="card-head">
+      <h2>Jobs</h2>
+      <div class="card-head-actions">
+        <button id="ev-btn-retry-failed" class="btn btn-ghost btn-small">Retry Failed</button>
+        <button id="ev-btn-clear-done" class="btn btn-ghost btn-small">Clear Done</button>
+        <button id="ev-btn-clear-all" class="btn btn-ghost btn-small" title="Xoá TẤT CẢ jobs (mọi trạng thái)">Clear All</button>
+        <button id="ev-btn-scroll-jobs" class="btn btn-ghost btn-small" title="Cuộn xuống cuối Jobs">↓</button>
+        <span class="muted" id="ev-job-summary">0 total</span>
+      </div>
+    </header>
+    <div id="ev-job-list" class="job-list">
+      <div class="empty">Paste combos và bấm Run Eventista.</div>
+    </div>
+  </section>
+
+  <section class="card card-success">
+    <header class="card-head">
+      <h2>Success output</h2>
+      <button id="ev-btn-copy-success" class="btn btn-ghost btn-small">Copy All</button>
+    </header>
+    <pre id="ev-success-pane" class="output-pane">Format: email|password|secret_2fa</pre>
+  </section>
+
+  <section class="card card-error">
+    <header class="card-head">
+      <h2>Error output</h2>
+      <button id="ev-btn-copy-error" class="btn btn-ghost btn-small">Copy All</button>
+    </header>
+    <pre id="ev-error-pane" class="output-pane">No errors yet.</pre>
+  </section>
+
+  <section class="card card-log">
+    <header class="card-head">
+      <h2>Log</h2>
+      <span class="muted" id="ev-log-target">-</span>
+    </header>
+    <div id="ev-log-pane" class="log-pane"></div>
   </section>
 </main>
 
@@ -929,6 +1090,8 @@
 <script src="/static/hme.js?v=__ASSET_VERSION__"></script>
 <script src="/static/autoreg.js?v=__ASSET_VERSION__"></script>
 <script src="/static/upi.js?v=__ASSET_VERSION__"></script>
+<script src="/static/mailreader.js?v=__ASSET_VERSION__"></script>
+<script src="/static/eventista.js?v=__ASSET_VERSION__"></script>
 <script src="/static/settings_panel.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>
