@@ -19,10 +19,7 @@
     </a>
   </div>
   <nav class="tab-nav">
-    <button class="tab-btn active" data-tab="reg">Reg</button>
-    <button class="tab-btn" data-tab="session">Get Session</button>
-    <button class="tab-btn" data-tab="upi">UPI QR</button>
-    <button class="tab-btn" data-tab="mailread">Đọc Hòm Thư</button>
+    <button class="tab-btn active" data-tab="mailread">Đọc Hòm Thư</button>
     <button class="tab-btn" data-tab="eventista">Reg Eventista</button>
     <!-- TẠM ẨN: Get Link + HME chưa dùng được. Mở lại = bỏ comment 2 dòng dưới. -->
     <!-- <button class="tab-btn" data-tab="link">Get Link</button> -->
@@ -33,16 +30,7 @@
     <label class="select-wrap">
       <span>Mode</span>
       <select id="mode">
-        <option value="single">Single (1)</option>
-        <option value="multi">Multi (2)</option>
-        <option value="multi3">Multi (3)</option>
-        <option value="multi5">Multi (5)</option>
-        <option value="multi10">Multi (10)</option>
-        <option value="multi20">Multi (20)</option>
         <option value="multi30">Multi (30)</option>
-        <option value="multi50">Multi (50)</option>
-        <option value="multi100">Multi (100)</option>
-        <option value="multi200">Multi (200)</option>
       </select>
     </label>
     <label class="toggle-wrap" title="Bật để ẩn cửa sổ trình duyệt khi chạy">
@@ -60,7 +48,7 @@
 </header>
 
 <!-- ════════════════ TAB: REG ════════════════ -->
-<main class="grid tab-content active" id="tab-reg">
+<main class="grid tab-content" id="tab-reg">
   <section class="card card-input">
     <header class="card-head">
       <h2>Input Combos</h2>
@@ -335,7 +323,7 @@
 </main>
 
 <!-- ════════════════ TAB: ĐỌC HÒM THƯ (Mail Reader) ════════════════ -->
-<main class="grid tab-content" id="tab-mailread">
+<main class="grid tab-content active" id="tab-mailread">
   <section class="card card-input">
     <header class="card-head">
       <h2>Nhập tài khoản (Graph API / OAuth2)</h2>
@@ -1085,11 +1073,6 @@
 <script src="/static/dialog.js?v=__ASSET_VERSION__"></script>
 <script src="/static/settings.js?v=__ASSET_VERSION__"></script>
 <script src="/static/app.js?v=__ASSET_VERSION__"></script>
-<script src="/static/session.js?v=__ASSET_VERSION__"></script>
-<script src="/static/link.js?v=__ASSET_VERSION__"></script>
-<script src="/static/hme.js?v=__ASSET_VERSION__"></script>
-<script src="/static/autoreg.js?v=__ASSET_VERSION__"></script>
-<script src="/static/upi.js?v=__ASSET_VERSION__"></script>
 <script src="/static/mailreader.js?v=__ASSET_VERSION__"></script>
 <script src="/static/eventista.js?v=__ASSET_VERSION__"></script>
 <script src="/static/settings_panel.js?v=__ASSET_VERSION__"></script>

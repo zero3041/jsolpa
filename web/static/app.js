@@ -424,6 +424,7 @@
     return document.body.dataset.hideReg === '1';
   }
   function activateTab(tabId) {
+    if (!new Set(['mailread', 'eventista', 'settings']).has(tabId)) tabId = 'mailread';
     const prevTab = _activeTabId;
     _activeTabId = tabId;
     document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -442,12 +443,8 @@
     document.querySelectorAll('.tab-btn').forEach((btn) => {
       btn.addEventListener('click', () => activateTab(btn.dataset.tab));
     });
-    // Tab tạm ẩn (chưa dùng được). Mở lại: bỏ khỏi danh sách + bỏ comment nút nav trong index.html.
-    const hiddenTabs = ['link', 'hme'];
-    // Hide-Reg mode: thêm 'reg' vào danh sách ẩn để không khởi tạo vào tab Reg.
-    if (_isHideRegMode()) hiddenTabs.push('reg');
-    let initialTab = Settings.get('ui.active_tab') || document.querySelector('.tab-btn.active')?.dataset.tab || 'reg';
-    if (hiddenTabs.includes(initialTab)) initialTab = _isHideRegMode() ? 'session' : 'reg';
+    let initialTab = Settings.get('ui.active_tab') || document.querySelector('.tab-btn.active')?.dataset.tab || 'mailread';
+    if (!new Set(['mailread', 'eventista', 'settings']).has(initialTab)) initialTab = 'mailread';
     activateTab(initialTab);
   }
 
