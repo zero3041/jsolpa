@@ -988,6 +988,33 @@ body {
   grid-template-columns: 80px minmax(0, 1fr) 72px auto;
 }
 
+/* Auto Vote tab — cùng cấu trúc grid với eventista. */
+#tab-vote .job.vote-job {
+  grid-template-columns: 80px minmax(0, 1fr) 72px auto;
+}
+
+#tab-vote .card-jobs .job-list {
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+}
+
+#tab-vote .card-jobs .job-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+#tab-vote .card-jobs .job-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 2px solid var(--bg-elev);
+  border-radius: 999px;
+}
+
+#tab-vote .job.vote-job .job-duration {
+  display: none;
+}
+
 /* Luôn giữ một gutter/track nhìn thấy để danh sách dài có thể cuộn trong OBS
    và các cửa sổ không hiển thị scrollbar overlay. */
 #tab-eventista .card-jobs .job-list {

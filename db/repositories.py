@@ -77,6 +77,9 @@ _EXACT_KEYS: frozenset[str] = frozenset([
     "eventista.max_concurrent", "eventista.use_proxy", "eventista.captcha_mode",
     "eventista.poll_timeout_seconds", "eventista.job_timeout",
     "eventista.yescaptcha_key",
+    "vote.engine", "vote.headless", "vote.max_concurrent", "vote.use_proxy",
+    "vote.job_timeout", "vote.candidate", "vote.confirm_vote",
+    "vote.min_seconds",
     "reg_mode.current",
     "session.mode", "upi.mode",
     "hme.runner.action", "hme.runner.count_per_cycle",
@@ -357,6 +360,67 @@ def _validate_type_constraint(key: str, value: Any) -> None:
         if value is not None and not isinstance(value, str):
             raise RepositoryError(
                 "set", TypeError(f"{key}: must be str or null, got {type(value).__name__}")
+            )
+        return
+
+    # --- vote namespace ---
+    if key == "vote.engine":
+        if not isinstance(value, str) or value not in ("camoufox", "playwright", "chrome", "cloakbrowser"):
+            raise RepositoryError(
+                "set", ValueError(
+                    f"{key}: must be str in {{\"camoufox\",\"playwright\",\"chrome\",\"cloakbrowser\"}}, got {value!r}"
+                )
+            )
+        return
+
+    if key in ("vote.headless", "vote.use_proxy", "vote.confirm_vote"):
+        if not isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be bool, got {type(value).__name__}")
+            )
+        return
+
+    if key == "vote.max_concurrent":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (1 <= value <= 30):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [1, 30], got {value}")
+            )
+        return
+
+    if key == "vote.job_timeout":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (30 <= value <= 3600):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [30, 3600], got {value}")
+            )
+        return
+
+    if key == "vote.min_seconds":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (0 <= value <= 300):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [0, 300], got {value}")
+            )
+        return
+
+    if key == "vote.candidate":
+        if not isinstance(value, str):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be str, got {type(value).__name__}")
+            )
+        if not value.strip():
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must not be empty")
             )
         return
 

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .auth import get_token, require_token  # token-based auth
 from .manager import get_manager, get_session_manager, get_link_manager, get_upi_manager, set_sse_mux
 from .eventista import get_eventista_manager
+from .vote import get_vote_manager
 from .mail_modes import get_registry, serialize_for_api
 from .sse_mux import SseMux
 from payment_link import REGION_BILLING
@@ -149,6 +150,8 @@ async def on_startup():
     get_upi_manager()
     # Eventista manager — in-memory only, không cần job_repo.
     get_eventista_manager()
+    # Vote manager — in-memory only, không cần job_repo.
+    get_vote_manager()
 
     # Hydrate managers với settings từ DB (R9.1, R9.2, R9.3)
     # Workers đã được schedule bởi _ensure_workers() nhưng chưa execute
@@ -158,6 +161,7 @@ async def on_startup():
     get_link_manager().apply_settings(all_settings)
     get_upi_manager().apply_settings(all_settings)
     get_eventista_manager().apply_settings(all_settings)
+    get_vote_manager().apply_settings(all_settings)
     # Telegram notifier — hydrate config (token/chat_id/notify toggle) từ DB.
     from .telegram_notifier import get_telegram_notifier
     get_telegram_notifier().apply_settings(all_settings)
@@ -236,6 +240,19 @@ async def on_startup():
         "captcha_mode": em.captcha_mode,
         "poll_timeout_seconds": em.poll_timeout_seconds,
         "jobs": em.list_jobs(),
+    }])
+
+    vm = get_vote_manager()
+    _sse_mux.register_snapshot("vote", lambda: [{
+        "type": "snapshot",
+        "max_concurrent": vm.max_concurrent,
+        "job_timeout": vm.job_timeout,
+        "engine": vm.engine,
+        "headless": vm.headless,
+        "use_proxy": vm.use_proxy,
+        "candidate": vm.candidate,
+        "confirm_vote": vm.confirm_vote,
+        "jobs": vm.list_jobs(),
     }])
 
     def _hme_log_snapshot() -> list[dict]:
@@ -2506,6 +2523,162 @@ async def delete_eventista_account(email: str) -> JSONResponse:
     if not removed:
         raise HTTPException(404, "account not found")
     return JSONResponse({"removed": True})
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Auto Vote (tinhhasayhi.1vote.vn)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class AddVoteJobsRequest(BaseModel):
+    combos: str = Field(..., description="Textarea content, 1 combo/l dòng (email|password).")
+
+
+class SetVoteConfigRequest(BaseModel):
+    max_concurrent: int | None = Field(default=None, ge=1, le=30)
+    job_timeout: float | None = Field(default=None, ge=30, le=3600)
+    engine: str | None = Field(default=None)
+    headless: bool | None = Field(default=None)
+    use_proxy: bool | None = Field(default=None)
+    candidate: str | None = Field(default=None)
+    confirm_vote: bool | None = Field(default=None)
+    min_seconds: float | None = Field(default=None, ge=0, le=300)
+
+
+@app.get("/api/vote/jobs")
+async def list_vote_jobs() -> JSONResponse:
+    vm = get_vote_manager()
+    return JSONResponse({
+        "max_concurrent": vm.max_concurrent,
+        "job_timeout": vm.job_timeout,
+        "engine": vm.engine,
+        "headless": vm.headless,
+        "use_proxy": vm.use_proxy,
+        "candidate": vm.candidate,
+        "confirm_vote": vm.confirm_vote,
+        "min_seconds": vm.min_seconds,
+        "jobs": vm.list_jobs(),
+    })
+
+
+@app.post("/api/vote/jobs")
+async def add_vote_jobs(payload: AddVoteJobsRequest) -> JSONResponse:
+    combos = payload.combos.splitlines()
+    vm = get_vote_manager()
+    jobs = vm.add_jobs(combos)
+    return JSONResponse({"added": len(jobs), "jobs": [j.to_dict() for j in jobs]})
+
+
+@app.post("/api/vote/jobs/stop-all")
+async def stop_all_vote_jobs() -> JSONResponse:
+    vm = get_vote_manager()
+    stopped = await vm.stop_all()
+    return JSONResponse({"stopped": stopped})
+
+
+@app.post("/api/vote/jobs/clear-finished")
+async def clear_finished_vote_jobs() -> JSONResponse:
+    vm = get_vote_manager()
+    removed = vm.clear_finished()
+    return JSONResponse({"removed": removed})
+
+
+@app.post("/api/vote/jobs/clear-all")
+async def clear_all_vote_jobs() -> JSONResponse:
+    vm = get_vote_manager()
+    removed = vm.clear_all()
+    return JSONResponse({"removed": removed})
+
+
+@app.post("/api/vote/jobs/retry-failed")
+async def retry_failed_vote_jobs() -> JSONResponse:
+    vm = get_vote_manager()
+    retried = await vm.retry_failed()
+    return JSONResponse({"retried": retried})
+
+
+@app.get("/api/vote/outputs")
+async def get_vote_outputs() -> JSONResponse:
+    vm = get_vote_manager()
+    return JSONResponse(vm.list_outputs())
+
+
+@app.get("/api/vote/jobs/{job_id}")
+async def get_vote_job(job_id: str) -> JSONResponse:
+    vm = get_vote_manager()
+    data = vm.get_job(job_id)
+    if data is None:
+        raise HTTPException(404, "job not found")
+    return JSONResponse(data)
+
+
+@app.post("/api/vote/jobs/{job_id}/retry")
+async def retry_vote_job(job_id: str) -> JSONResponse:
+    vm = get_vote_manager()
+    if job_id not in vm.jobs:
+        raise HTTPException(404, "job not found")
+    ok = vm.retry_job(job_id)
+    return JSONResponse({"ok": ok})
+
+
+@app.delete("/api/vote/jobs/{job_id}")
+async def delete_vote_job(job_id: str) -> JSONResponse:
+    vm = get_vote_manager()
+    ok = vm.remove_job(job_id)
+    if not ok:
+        raise HTTPException(404, "job not found")
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/vote/config")
+async def get_vote_config() -> JSONResponse:
+    vm = get_vote_manager()
+    return JSONResponse(vm.to_config_dict())
+
+
+@app.post("/api/vote/config")
+async def set_vote_config(payload: SetVoteConfigRequest) -> JSONResponse:
+    vm = get_vote_manager()
+    settings_writes: dict[str, Any] = {}
+    if payload.max_concurrent is not None:
+        vm.set_max_concurrent(payload.max_concurrent)
+        settings_writes["vote.max_concurrent"] = payload.max_concurrent
+    if payload.job_timeout is not None:
+        vm.set_job_timeout(payload.job_timeout)
+        settings_writes["vote.job_timeout"] = payload.job_timeout
+    if payload.engine is not None:
+        try:
+            vm.set_engine(payload.engine)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        settings_writes["vote.engine"] = payload.engine
+    if payload.headless is not None:
+        vm.set_headless(payload.headless)
+        settings_writes["vote.headless"] = payload.headless
+    if payload.use_proxy is not None:
+        vm.set_use_proxy(payload.use_proxy)
+        settings_writes["vote.use_proxy"] = payload.use_proxy
+    if payload.candidate is not None:
+        try:
+            vm.set_candidate(payload.candidate)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        settings_writes["vote.candidate"] = vm.candidate
+    if payload.confirm_vote is not None:
+        vm.set_confirm_vote(payload.confirm_vote)
+        settings_writes["vote.confirm_vote"] = payload.confirm_vote
+    if payload.min_seconds is not None:
+        try:
+            vm.set_min_seconds(payload.min_seconds)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        settings_writes["vote.min_seconds"] = vm.min_seconds
+    if settings_writes:
+        try:
+            _get_settings_repo().bulk_set(settings_writes)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("Vote config write-through failed: %s", exc)
+    return JSONResponse(vm.to_config_dict())
 
 
 # Mount static folder cho CSS/JS

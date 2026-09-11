@@ -21,6 +21,7 @@
   <nav class="tab-nav">
     <button class="tab-btn active" data-tab="mailread">Đọc Hòm Thư</button>
     <button class="tab-btn" data-tab="eventista">Reg Eventista</button>
+    <button class="tab-btn" data-tab="vote">Auto Vote</button>
     <!-- TẠM ẨN: Get Link + HME chưa dùng được. Mở lại = bỏ comment 2 dòng dưới. -->
     <!-- <button class="tab-btn" data-tab="link">Get Link</button> -->
     <!-- <button class="tab-btn" data-tab="hme">HME</button> -->
@@ -478,6 +479,109 @@
       <span class="muted" id="ev-log-target">-</span>
     </header>
     <div id="ev-log-pane" class="log-pane"></div>
+  </section>
+</main>
+
+<!-- ════════════════ TAB: AUTO VOTE ════════════════ -->
+<main class="grid tab-content" id="tab-vote">
+  <section class="card card-input">
+    <header class="card-head">
+      <h2>Auto Vote (tinhhasayhi.1vote.vn)</h2>
+      <div class="card-head-actions">
+        <button id="vt-btn-clear-input" class="btn btn-ghost btn-small">Clear Input</button>
+      </div>
+    </header>
+    <textarea class="combo-textarea" id="vt-combo-input" placeholder="email1@gmail.com|pwd1&#10;email2@gmail.com|pwd2" spellcheck="false"></textarea>
+    <div class="card-settings">
+      <div class="card-settings-row card-settings-row-mixed">
+        <label class="input-group config-field-mode">
+          <span class="input-label">Engine</span>
+          <select id="vt-engine">
+            <option value="chrome">Chrome thật</option>
+            <option value="camoufox">Camoufox (anti-detect)</option>
+            <option value="playwright">Playwright Chromium</option>
+            <option value="cloakbrowser">CloakBrowser</option>
+          </select>
+        </label>
+        <label class="input-group config-field-long" title="Tên thí sinh cần bình chọn (khớp alt của ảnh)">
+          <span class="input-label">Candidate</span>
+          <input type="text" id="vt-candidate" value="Anh Trai JSOL" spellcheck="false" />
+        </label>
+        <label class="input-group config-field-short">
+          <span class="input-label">Concurrency</span>
+          <input type="number" id="vt-max-concurrent" value="1" min="1" max="30" step="1" />
+        </label>
+      </div>
+      <div class="card-settings-row card-settings-row-mixed">
+        <label class="input-group config-field-short">
+          <span class="input-label">Timeout job (s)</span>
+          <input type="number" id="vt-job-timeout" value="600" min="30" max="3600" step="30" />
+        </label>
+        <label class="input-group config-field-short" title="Job qua proxy phải kéo dài tối thiểu bao nhiêu giây (proxy xoay IP mỗi 60s → để 60). 0 = tắt.">
+          <span class="input-label">Min duration (s)</span>
+          <input type="number" id="vt-min-seconds" value="60" min="0" max="300" step="5" />
+        </label>
+        <label class="toggle-wrap" title="Chạy qua proxy pool (Settings → Proxy)">
+          <input type="checkbox" id="vt-proxy-toggle" checked />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Proxy</span>
+        </label>
+        <label class="toggle-wrap" title="Ẩn cửa sổ trình duyệt">
+          <input type="checkbox" id="vt-headless-toggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Headless</span>
+        </label>
+        <label class="toggle-wrap" title="Bật = bấm 'Bình chọn ngay' thật sau video; tắt = dry-run (dừng khi nút sẵn sàng)">
+          <input type="checkbox" id="vt-confirm-toggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Vote thật (bấm Bình chọn ngay)</span>
+        </label>
+      </div>
+    </div>
+    <div class="card-actions">
+      <button id="vt-btn-run" class="btn btn-primary">Run Vote</button>
+      <button id="vt-btn-stop-all" class="btn btn-danger">Stop All</button>
+      <span class="muted" id="vt-combo-count">0 combos</span>
+    </div>
+  </section>
+
+  <section class="card card-jobs">
+    <header class="card-head">
+      <h2>Jobs</h2>
+      <div class="card-head-actions">
+        <button id="vt-btn-retry-failed" class="btn btn-ghost btn-small">Retry Failed</button>
+        <button id="vt-btn-clear-done" class="btn btn-ghost btn-small">Clear Done</button>
+        <button id="vt-btn-clear-all" class="btn btn-ghost btn-small" title="Xoá TẤT CẢ jobs (mọi trạng thái)">Clear All</button>
+        <span class="muted" id="vt-job-summary">0 total</span>
+      </div>
+    </header>
+    <div id="vt-job-list" class="job-list">
+      <div class="empty">Paste combos và bấm Run Vote.</div>
+    </div>
+  </section>
+
+  <section class="card card-success">
+    <header class="card-head">
+      <h2>Success output</h2>
+      <button id="vt-btn-copy-success" class="btn btn-ghost btn-small">Copy All</button>
+    </header>
+    <pre id="vt-success-pane" class="output-pane">Format: email|password|ip</pre>
+  </section>
+
+  <section class="card card-error">
+    <header class="card-head">
+      <h2>Error output</h2>
+      <button id="vt-btn-copy-error" class="btn btn-ghost btn-small">Copy All</button>
+    </header>
+    <pre id="vt-error-pane" class="output-pane">No errors yet.</pre>
+  </section>
+
+  <section class="card card-log">
+    <header class="card-head">
+      <h2>Log</h2>
+      <span class="muted" id="vt-log-target">-</span>
+    </header>
+    <div id="vt-log-pane" class="log-pane"></div>
   </section>
 </main>
 
@@ -1075,6 +1179,7 @@
 <script src="/static/app.js?v=__ASSET_VERSION__"></script>
 <script src="/static/mailreader.js?v=__ASSET_VERSION__"></script>
 <script src="/static/eventista.js?v=__ASSET_VERSION__"></script>
+<script src="/static/vote.js?v=__ASSET_VERSION__"></script>
 <script src="/static/settings_panel.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

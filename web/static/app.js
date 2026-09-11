@@ -424,7 +424,7 @@
     return document.body.dataset.hideReg === '1';
   }
   function activateTab(tabId) {
-    if (!new Set(['mailread', 'eventista', 'settings']).has(tabId)) tabId = 'mailread';
+    if (!new Set(['mailread', 'eventista', 'vote', 'settings']).has(tabId)) tabId = 'mailread';
     const prevTab = _activeTabId;
     _activeTabId = tabId;
     document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -444,7 +444,7 @@
       btn.addEventListener('click', () => activateTab(btn.dataset.tab));
     });
     let initialTab = Settings.get('ui.active_tab') || document.querySelector('.tab-btn.active')?.dataset.tab || 'mailread';
-    if (!new Set(['mailread', 'eventista', 'settings']).has(initialTab)) initialTab = 'mailread';
+    if (!new Set(['mailread', 'eventista', 'vote', 'settings']).has(initialTab)) initialTab = 'mailread';
     activateTab(initialTab);
   }
 
