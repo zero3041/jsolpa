@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .engine import DatabaseEngine
     from .repositories import (
+        ChangeEmailRepository,
         ComboRepository,
         EventistaAccountRepository,
         JobRepository,
@@ -115,3 +116,10 @@ def get_eventista_repo(engine: "DatabaseEngine") -> "EventistaAccountRepository"
     from .repositories import EventistaAccountRepository
 
     return EventistaAccountRepository(engine)
+
+
+def get_change_email_repo(engine: "DatabaseEngine") -> "ChangeEmailRepository":
+    """Tạo và trả về ChangeEmailRepository instance (lịch sử Đổi Email)."""
+    from .repositories import ChangeEmailRepository
+
+    return ChangeEmailRepository(engine)

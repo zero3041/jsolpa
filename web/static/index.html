@@ -22,6 +22,7 @@
     <button class="tab-btn active" data-tab="mailread">Đọc Hòm Thư</button>
     <button class="tab-btn" data-tab="eventista">Reg Eventista</button>
     <button class="tab-btn" data-tab="vote">Auto Vote</button>
+    <button class="tab-btn" data-tab="change-email">Đổi Email</button>
     <!-- TẠM ẨN: Get Link + HME chưa dùng được. Mở lại = bỏ comment 2 dòng dưới. -->
     <!-- <button class="tab-btn" data-tab="link">Get Link</button> -->
     <!-- <button class="tab-btn" data-tab="hme">HME</button> -->
@@ -582,6 +583,153 @@
       <span class="muted" id="vt-log-target">-</span>
     </header>
     <div id="vt-log-pane" class="log-pane"></div>
+  </section>
+</main>
+
+<!-- ════════════════ TAB: ĐỔI EMAIL ════════════════ -->
+<main class="grid tab-content" id="tab-change-email">
+  <section class="card card-input">
+    <header class="card-head">
+      <h2>Đổi Email (tinhhasayhi.1vote.vn)</h2>
+      <div class="card-head-actions">
+        <button id="ce-btn-clear-used" class="btn btn-ghost btn-small" title="Xoá lịch sử account/mailbox đã dùng → cho phép dùng lại">Xoá lịch sử đã dùng</button>
+        <button id="ce-btn-clear-input" class="btn btn-ghost btn-small">Clear Input</button>
+      </div>
+    </header>
+    <div class="mail-mode-row">
+      <label class="input-group config-field-mode">
+        <span class="input-label">Engine</span>
+        <select id="ce-engine">
+          <option value="chrome">Chrome thật</option>
+          <option value="camoufox">Camoufox (anti-detect)</option>
+          <option value="playwright">Playwright Chromium</option>
+          <option value="cloakbrowser">CloakBrowser</option>
+        </select>
+      </label>
+      <label class="input-group config-field-mode">
+        <span class="input-label">Captcha mode</span>
+        <select id="ce-captcha-mode">
+          <option value="camoufox">Camoufox-captcha (click trong shadow root)</option>
+          <option value="inpage">In-page (widget riêng cùng browser)</option>
+          <option value="auto" selected>Auto (chờ widget tự solve)</option>
+          <option value="click">Click CF Turnstile (auto click)</option>
+          <option value="yescaptcha">YesCaptcha API</option>
+          <option value="ezsolver">EzSolver (Chrome thật local)</option>
+          <option value="none">None (bỏ qua)</option>
+        </select>
+      </label>
+      <span class="muted" id="ce-used-summary" title="Account/mailbox đã đổi thành công ở các lần chạy trước (bị loại khỏi lần chạy sau)">Đã dùng: 0 account · 0 mailbox</span>
+    </div>
+    <div class="ce-combo-columns">
+      <div class="ce-combo-col">
+        <div class="ce-col-head">
+          <span class="input-label">Tài khoản 1Zone (email cũ)</span>
+          <span class="muted" id="ce-account-count">0 accounts</span>
+        </div>
+        <textarea class="combo-textarea" id="ce-account-input" placeholder="riadaoon+4@outlook.com|Vote@sol&#10;riadaoon+5@outlook.com|Vote@sol&#10;riadaoon+6@outlook.com|Vote@sol" spellcheck="false"></textarea>
+      </div>
+      <div class="ce-combo-col">
+        <div class="ce-col-head">
+          <span class="input-label">Mailbox mới (đổi sang)</span>
+          <span class="muted" id="ce-mailbox-count">0 mailboxes</span>
+        </div>
+        <textarea class="combo-textarea" id="ce-mailbox-input" placeholder="email1@hotmail.com|pwd1|M.C548...|9e5f94bc-...&#10;email2@outlook.com|pwd2|M.C525...|9e5f94bc-..." spellcheck="false"></textarea>
+      </div>
+    </div>
+    <div class="card-settings">
+      <div class="card-settings-row card-settings-row-mixed">
+        <label class="input-group config-field-long" title="Tên thí sinh cần bấm Bình chọn (khớp alt của ảnh)">
+          <span class="input-label">Candidate</span>
+          <input type="text" id="ce-candidate" value="Xoay Vòng" spellcheck="false" />
+        </label>
+        <label class="input-group config-field-long" title="Tab hạng mục cần mở trước khi tìm candidate">
+          <span class="input-label">Category tab</span>
+          <input type="text" id="ce-category" value="THE GROUP PERFORMANCE ICON" spellcheck="false" />
+        </label>
+      </div>
+      <div class="card-settings-row card-settings-row-mixed">
+        <label class="input-group config-field-short">
+          <span class="input-label">Concurrency</span>
+          <input type="number" id="ce-max-concurrent" value="1" min="1" max="30" step="1" />
+        </label>
+        <label class="input-group config-field-short">
+          <span class="input-label">Timeout job (s)</span>
+          <input type="number" id="ce-job-timeout" value="900" min="30" max="3600" step="30" />
+        </label>
+        <label class="input-group config-field-short" title="Tối đa poll mail kích hoạt bao lâu">
+          <span class="input-label">Poll mail (s)</span>
+          <input type="number" id="ce-poll-timeout" value="600" min="30" max="3600" step="30" />
+        </label>
+        <label class="input-group config-field-short" title="Job qua proxy phải kéo dài tối thiểu bao nhiêu giây (proxy xoay IP mỗi 60s). 0 = tắt.">
+          <span class="input-label">Min duration (s)</span>
+          <input type="number" id="ce-min-seconds" value="0" min="0" max="300" step="5" />
+        </label>
+      </div>
+      <div class="card-settings-row card-settings-row-mixed">
+        <label class="input-group config-field-long" title="Key YesCaptcha (chỉ dùng khi Captcha mode = YesCaptcha API)">
+          <span class="input-label">YesCaptcha key</span>
+          <input type="password" id="ce-yescaptcha-key" placeholder="client key (từ Settings)" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="toggle-wrap" title="Chạy qua proxy pool (Settings → Proxy)">
+          <input type="checkbox" id="ce-proxy-toggle" checked />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Proxy</span>
+        </label>
+        <label class="toggle-wrap" title="Ẩn cửa sổ trình duyệt">
+          <input type="checkbox" id="ce-headless-toggle" />
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Headless</span>
+        </label>
+      </div>
+    </div>
+    <div class="card-actions">
+      <button id="ce-btn-run" class="btn btn-primary">Run Đổi Email</button>
+      <button id="ce-btn-stop-all" class="btn btn-danger">Stop All</button>
+      <span class="muted" id="ce-run-note" title="Kết quả lần Run gần nhất (thêm vào queue / bỏ qua)"></span>
+    </div>
+  </section>
+
+  <section class="card card-jobs">
+    <header class="card-head">
+      <h2>Jobs</h2>
+      <div class="card-head-actions">
+        <button id="ce-btn-toggle-history" class="btn btn-ghost btn-small" title="Acc đã chạy ở các lần trước (lưu DB)">Lịch sử (0)</button>
+        <button id="ce-btn-retry-failed" class="btn btn-ghost btn-small">Retry Failed</button>
+        <button id="ce-btn-clear-done" class="btn btn-ghost btn-small">Clear Done</button>
+        <button id="ce-btn-clear-all" class="btn btn-ghost btn-small" title="Xoá TẤT CẢ jobs (mọi trạng thái)">Clear All</button>
+        <span class="muted" id="ce-job-summary">0 total</span>
+      </div>
+    </header>
+    <div id="ce-job-list" class="job-list">
+      <div class="empty">No jobs yet. Điền 2 khung trên và bấm Run Đổi Email.</div>
+    </div>
+    <div id="ce-history-list" class="ce-history-list" hidden>
+      <div class="empty">Chưa có lịch sử.</div>
+    </div>
+  </section>
+
+  <section class="card card-success">
+    <header class="card-head">
+      <h2>Success output</h2>
+      <button id="ce-btn-copy-success" class="btn btn-ghost btn-small">Copy All</button>
+    </header>
+    <pre id="ce-success-pane" class="output-pane">Format: mailcu|mailmoi|pass</pre>
+  </section>
+
+  <section class="card card-error">
+    <header class="card-head">
+      <h2>Error output</h2>
+      <button id="ce-btn-copy-error" class="btn btn-ghost btn-small">Copy All</button>
+    </header>
+    <pre id="ce-error-pane" class="output-pane">No errors yet.</pre>
+  </section>
+
+  <section class="card card-log">
+    <header class="card-head">
+      <h2>Log</h2>
+      <span class="muted" id="ce-log-target">-</span>
+    </header>
+    <div id="ce-log-pane" class="log-pane"></div>
   </section>
 </main>
 
@@ -1180,6 +1328,7 @@
 <script src="/static/mailreader.js?v=__ASSET_VERSION__"></script>
 <script src="/static/eventista.js?v=__ASSET_VERSION__"></script>
 <script src="/static/vote.js?v=__ASSET_VERSION__"></script>
+<script src="/static/change_email.js?v=__ASSET_VERSION__"></script>
 <script src="/static/settings_panel.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

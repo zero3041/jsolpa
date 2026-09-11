@@ -65,7 +65,7 @@ class SseMux:
 
         Returns list of dicts, each with 'channel' field.
         """
-        CHANNEL_ORDER = ["reg", "session", "link", "upi", "hme_log", "autoreg_log"]
+        CHANNEL_ORDER = ["reg", "session", "link", "upi", "hme_log", "autoreg_log", "eventista", "vote", "change_email"]
         events: list[dict] = []
         for ch in CHANNEL_ORDER:
             fn = self._snapshot_fns.get(ch)

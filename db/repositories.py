@@ -80,6 +80,13 @@ _EXACT_KEYS: frozenset[str] = frozenset([
     "vote.engine", "vote.headless", "vote.max_concurrent", "vote.use_proxy",
     "vote.job_timeout", "vote.candidate", "vote.confirm_vote",
     "vote.min_seconds",
+    "change_email.engine", "change_email.headless",
+    "change_email.max_concurrent", "change_email.use_proxy",
+    "change_email.job_timeout", "change_email.candidate",
+    "change_email.category", "change_email.captcha_mode",
+    "change_email.poll_timeout_seconds", "change_email.yescaptcha_key",
+    "change_email.min_seconds",
+    "change_email.used_accounts", "change_email.used_mailboxes",
     "reg_mode.current",
     "session.mode", "upi.mode",
     "hme.runner.action", "hme.runner.count_per_cycle",
@@ -107,6 +114,7 @@ _SENSITIVE_KEYS: frozenset[str] = frozenset([
     "mail_mode.worker_config",
     "telegram.bot_token",
     "eventista.yescaptcha_key",
+    "change_email.yescaptcha_key",
     "web.auth_token",
 ])
 
@@ -422,6 +430,95 @@ def _validate_type_constraint(key: str, value: Any) -> None:
             raise RepositoryError(
                 "set", ValueError(f"{key}: must not be empty")
             )
+        return
+
+    # --- change_email namespace (Đổi Email tab) ---
+    if key == "change_email.engine":
+        if not isinstance(value, str) or value not in ("camoufox", "playwright", "chrome", "cloakbrowser"):
+            raise RepositoryError(
+                "set", ValueError(
+                    f"{key}: must be str in {{\"camoufox\",\"playwright\",\"chrome\",\"cloakbrowser\"}}, got {value!r}"
+                )
+            )
+        return
+
+    if key in ("change_email.headless", "change_email.use_proxy"):
+        if not isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be bool, got {type(value).__name__}")
+            )
+        return
+
+    if key == "change_email.max_concurrent":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (1 <= value <= 30):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [1, 30], got {value}")
+            )
+        return
+
+    if key in ("change_email.poll_timeout_seconds", "change_email.job_timeout"):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (30 <= value <= 3600):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [30, 3600], got {value}")
+            )
+        return
+
+    if key == "change_email.min_seconds":
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be int, got {type(value).__name__}")
+            )
+        if not (0 <= value <= 300):
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must be in [0, 300], got {value}")
+            )
+        return
+
+    if key in ("change_email.candidate", "change_email.category"):
+        if not isinstance(value, str):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be str, got {type(value).__name__}")
+            )
+        if not value.strip():
+            raise RepositoryError(
+                "set", ValueError(f"{key}: must not be empty")
+            )
+        return
+
+    if key == "change_email.captcha_mode":
+        if not isinstance(value, str) or value not in ("auto", "click", "yescaptcha", "ezsolver", "camoufox", "inpage", "none"):
+            raise RepositoryError(
+                "set", ValueError(
+                    f"{key}: must be str in {{\"auto\",\"click\",\"yescaptcha\",\"ezsolver\",\"camoufox\",\"inpage\",\"none\"}}, got {value!r}"
+                )
+            )
+        return
+
+    if key == "change_email.yescaptcha_key":
+        if value is not None and not isinstance(value, str):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be str or null, got {type(value).__name__}")
+            )
+        return
+
+    if key in ("change_email.used_accounts", "change_email.used_mailboxes"):
+        if not isinstance(value, list):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be list of str, got {type(value).__name__}")
+            )
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                raise RepositoryError(
+                    "set", TypeError(f"{key}: must be list of str, got non-str item {item!r}")
+                )
         return
 
     # --- proxy namespace ---
@@ -845,7 +942,10 @@ def _validate_type_constraint(key: str, value: Any) -> None:
 
     # --- ui namespace ---
     if key == "ui.active_tab":
-        allowed_tabs = ("reg", "session", "link", "hme", "upi", "eventista", "settings")
+        allowed_tabs = (
+            "reg", "session", "link", "hme", "upi",
+            "eventista", "vote", "change-email", "settings",
+        )
         if not isinstance(value, str) or value not in allowed_tabs:
             raise RepositoryError(
                 "set", ValueError(f"{key}: must be str in {set(allowed_tabs)}, got {value!r}")
@@ -3103,6 +3203,89 @@ class EventistaAccountRepository:
                 return cursor.rowcount > 0
         except Exception as exc:
             raise RepositoryError("eventista_delete", exc) from exc
+
+
+class ChangeEmailRepository:
+    """Data access cho `change_email_jobs` table (Đổi Email tab).
+
+    Lịch sử đổi email từng account 1Zone: running → success / error / cancelled.
+    """
+
+    def __init__(self, engine: "DatabaseEngine") -> None:
+        self._engine = engine
+
+    def upsert(
+        self,
+        old_email: str,
+        new_email: str,
+        *,
+        password: str | None = None,
+        status: str = "running",
+        error: str | None = None,
+        engine: str | None = None,
+        proxy_used: str | None = None,
+        activation_url: str | None = None,
+    ) -> None:
+        """Insert hoặc update row theo old_email (UNIQUE).
+
+        Raises:
+            RepositoryError: Nếu write fail.
+        """
+        try:
+            with self._engine.get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO change_email_jobs
+                        (old_email, new_email, password, status, error, engine,
+                         proxy_used, activation_url, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                    ON CONFLICT(old_email) DO UPDATE SET
+                        new_email = excluded.new_email,
+                        password = excluded.password,
+                        status = excluded.status,
+                        error = excluded.error,
+                        engine = excluded.engine,
+                        proxy_used = excluded.proxy_used,
+                        activation_url = excluded.activation_url,
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    """,
+                    (
+                        old_email, new_email, password, status, error, engine,
+                        proxy_used, activation_url,
+                    ),
+                )
+        except Exception as exc:
+            raise RepositoryError("change_email_upsert", exc) from exc
+
+    def list_all(self, *, limit: int = 1000, offset: int = 0) -> list[dict]:
+        """List lịch sử mới nhất trước."""
+        conn = self._engine.raw_connection()
+        rows = conn.execute(
+            "SELECT * FROM change_email_jobs ORDER BY updated_at DESC, id DESC "
+            "LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_by_email(self, old_email: str) -> dict | None:
+        """Lấy row theo account cũ."""
+        conn = self._engine.raw_connection()
+        row = conn.execute(
+            "SELECT * FROM change_email_jobs WHERE old_email = ?", (old_email,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def delete(self, old_email: str) -> bool:
+        """Xoá row theo account cũ. True nếu row bị xoá."""
+        try:
+            with self._engine.get_connection() as conn:
+                cursor = conn.execute(
+                    "DELETE FROM change_email_jobs WHERE old_email = ?", (old_email,)
+                )
+                return cursor.rowcount > 0
+        except Exception as exc:
+            raise RepositoryError("change_email_delete", exc) from exc
 
 
 # ---------------------------------------------------------------------------

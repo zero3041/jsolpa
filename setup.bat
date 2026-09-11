@@ -28,7 +28,7 @@ if not exist ".venv" (
 REM 2. Install deps
 echo [2/6] Installing dependencies...
 .venv\Scripts\pip install -q --upgrade pip 2>nul
-.venv\Scripts\pip install -q pydantic typer httpx "curl_cffi>=0.7" pyotp fastapi uvicorn camoufox playwright ruyiPage 2>nul
+.venv\Scripts\pip install -q -r requirements.txt 2>nul
 
 REM 3. Shim dir + junction + .pth để import package bất kể tên folder
 echo [3/6] Wiring package import via shim junction...

@@ -1,7 +1,7 @@
 """Schema definitions — DDL strings và version management cho SQLite persistence layer."""
 
 # Schema version hiện tại. Tăng khi có thay đổi DDL.
-CURRENT_VERSION = 13
+CURRENT_VERSION = 14
 
 # --- DDL: Schema version tracking ---
 
@@ -283,6 +283,31 @@ DDL_EVENTISTA_ACCOUNTS_INDEXES = """\
 CREATE INDEX IF NOT EXISTS idx_eventista_accounts_status ON eventista_accounts(status);
 """
 
+# --- v14: Change Email jobs (Đổi Email tab) ---
+# Lưu lịch sử đổi email từng account 1Zone: status + email mới + error.
+# status lifecycle: running → success / error / cancelled.
+
+DDL_CHANGE_EMAIL_JOBS = """\
+CREATE TABLE IF NOT EXISTS change_email_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    old_email TEXT NOT NULL UNIQUE,
+    new_email TEXT NOT NULL,
+    password TEXT,
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK(status IN ('running', 'success', 'error', 'cancelled')),
+    error TEXT,
+    engine TEXT,
+    proxy_used TEXT,
+    activation_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+"""
+
+DDL_CHANGE_EMAIL_JOBS_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_change_email_jobs_status ON change_email_jobs(status);
+"""
+
 # --- Ordered list tất cả DDL statements cho migration ---
 
 ALL_DDL: list[str] = [
@@ -315,6 +340,9 @@ ALL_DDL: list[str] = [
     # --- v13: Eventista accounts ---
     DDL_EVENTISTA_ACCOUNTS,
     DDL_EVENTISTA_ACCOUNTS_INDEXES,
+    # --- v14: Change Email jobs ---
+    DDL_CHANGE_EMAIL_JOBS,
+    DDL_CHANGE_EMAIL_JOBS_INDEXES,
 ]
 """Danh sách DDL theo thứ tự thực thi. Engine sẽ chạy lần lượt trong 1 transaction."""
 
@@ -629,5 +657,10 @@ MIGRATIONS: dict[int, list[str]] = {
         "ALTER TABLE outlook_combos ADD COLUMN tag_eventista INTEGER NOT NULL DEFAULT 0;",
         DDL_EVENTISTA_ACCOUNTS,
         DDL_EVENTISTA_ACCOUNTS_INDEXES,
+    ],
+    # v14: Đổi Email tab — lịch sử đổi email account 1Zone.
+    14: [
+        DDL_CHANGE_EMAIL_JOBS,
+        DDL_CHANGE_EMAIL_JOBS_INDEXES,
     ],
 }

@@ -425,6 +425,8 @@ async def _solve_turnstile(
     yescaptcha_key: str | None,
     proxy: str | None = None,
     log: Callable[[str], None],
+    site_url: str = _SITE_URL,
+    container_selector: str = "#cf-turnstile",
 ) -> None:
     """Xử lý Turnstile theo mode.
 
@@ -440,6 +442,10 @@ async def _solve_turnstile(
     - ``inpage``: inject widget Turnstile riêng ngay trong page đăng ký →
       auto-solve hoặc click checkbox → inject token. Cùng IP + fingerprint.
     - ``none``: bỏ qua — submit thẳng (site tự pass hoặc captcha không chặn).
+
+    ``site_url`` / ``container_selector``: cho phép flow khác dùng chung solver
+    với widget Turnstile khác selector (vd Đổi Email dùng
+    ``.eventista-custom-turnstile``). Mặc định giữ nguyên hành vi Reg Eventista.
     """
     if mode == "none":
         log("[captcha] bỏ qua captcha (mode=none)")
@@ -456,7 +462,7 @@ async def _solve_turnstile(
         sitekey = await _sitekey(page)
         if not sitekey:
             raise EventistaError("không trích được Turnstile sitekey từ trang")
-        token = await _yescaptcha_solve(yescaptcha_key, _SITE_URL, sitekey, log=log)
+        token = await _yescaptcha_solve(yescaptcha_key, site_url, sitekey, log=log)
         await page.evaluate(
             """(token) => {
                 const el = document.querySelector('input[name="cf-turnstile-response"]');
@@ -472,7 +478,7 @@ async def _solve_turnstile(
         sitekey = await _sitekey(page)
         if not sitekey:
             raise EventistaError("không trích được Turnstile sitekey từ trang")
-        token = await _ezsolver_solve(sitekey, _SITE_URL, proxy=proxy, log=log)
+        token = await _ezsolver_solve(sitekey, site_url, proxy=proxy, log=log)
         await page.evaluate(
             """(token) => {
                 const el = document.querySelector('input[name="cf-turnstile-response"]');
@@ -493,7 +499,9 @@ async def _solve_turnstile(
 
     if mode == "camoufox":
         log("● camoufox-captcha: click checkbox Turnstile trong shadow root...")
-        await _solve_turnstile_camoufox(page, log=log)
+        await _solve_turnstile_camoufox(
+            page, log=log, container_selector=container_selector
+        )
         return
 
     # mode == "auto" — đợi widget tự solve (tối đa 120s).
@@ -616,6 +624,7 @@ async def _solve_turnstile_camoufox(
     *,
     log: Callable[[str], None],
     timeout: float = 120.0,
+    container_selector: str = "#cf-turnstile",
 ) -> None:
     """Solve Turnstile bằng camoufox-captcha ngay trong page hiện tại.
 
@@ -634,7 +643,7 @@ async def _solve_turnstile_camoufox(
             "(pip install camoufox-captcha)"
         ) from exc
 
-    container = page.locator("#cf-turnstile").first
+    container = page.locator(container_selector).first
     try:
         await container.wait_for(state="attached", timeout=30000)
     except Exception as exc:  # noqa: BLE001

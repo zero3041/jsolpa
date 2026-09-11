@@ -228,8 +228,7 @@
     if (!job) return;
     try {
       const data = await api(`/api/vote/jobs/${jobId}`);
-      dom.logPane.innerHTML = renderLogLines(job, data.log_lines || []);
-      dom.logPane.scrollTop = dom.logPane.scrollHeight;
+      renderLogLines(job, data.log_lines || []);
     } catch (_) { /* job đã bị xoá */ }
   }
 
