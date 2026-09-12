@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -52,6 +53,19 @@ _DEFAULT_MIN_SECONDS = 60.0  # job qua proxy tối thiểu bao lâu (proxy xoay 
 
 class VoteError(Exception):
     """Lỗi nghiệp vụ Auto Vote — message hiển thị thẳng trong job.error."""
+
+
+class AlreadyConvertedError(VoteError):
+    """Tài khoản đã được chuyển đổi sang email khác (popup 'Tài khoản đã được chuyển đổi').
+
+    Raise trong _do_login khi phát hiện popup sorry. Manager Đổi Email bắt riêng
+    để coi như success và đưa ra output luôn (yêu cầu user: đã chuyển rồi thì
+    không cần chạy lại flow).
+    """
+
+    def __init__(self, message: str, converted_email: str | None = None):
+        super().__init__(message)
+        self.converted_email = converted_email
 
 
 def _short_error(msg: str, limit: int = 160) -> str:
@@ -181,6 +195,31 @@ async def _do_login(
             log("✓ Đăng nhập thành công")
             return
         low = last_body.lower()
+        # ── Popup "Tài khoản đã được chuyển đổi" — chạy trước đó đã đổi sang mail mới.
+        # User yêu cầu: phát hiện popup này thì coi như success và đưa output luôn.
+        if "đã được chuyển đổi" in low or "da duoc chuyen doi" in low:
+            m = re.search(
+                r"chuyển đổi sang\s+([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})",
+                last_body,
+                re.IGNORECASE,
+            )
+            converted = m.group(1).strip().rstrip(".,;") if m else None
+            # Đóng popup "Đã hiểu" để browser không kẹt
+            try:
+                await page.evaluate(
+                    """() => {
+                        const btns = [...document.querySelectorAll('button')];
+                        const b = btns.find(x => (x.innerText||'').includes('Đã hiểu'));
+                        if (b) b.click();
+                    }"""
+                )
+            except Exception:
+                pass
+            log(f"⚠ Tài khoản đã được chuyển đổi sang {converted or 'unknown'} — coi như success")
+            raise AlreadyConvertedError(
+                f"Tài khoản đã được chuyển đổi sang {converted or 'unknown'}",
+                converted_email=converted,
+            )
         for hint in (
             "mật khẩu không đúng",
             "sai mật khẩu",

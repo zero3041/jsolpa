@@ -74,6 +74,7 @@ _YESCAPTCHA_CREATE_URL = "https://api.yescaptcha.com/createTask"
 _YESCAPTCHA_RESULT_URL = "https://api.yescaptcha.com/getTaskResult"
 _YESCAPTCHA_TIMEOUT = 120.0
 _CLOAKBROWSER_INSTALL_ATTEMPTED = False
+_CAMOUFOX_CAPTCHA_INSTALL_ATTEMPTED = False
 
 
 def _short_error(msg: str, limit: int = 160) -> str:
@@ -635,13 +636,41 @@ async def _solve_turnstile_camoufox(
     Sau khi click + verify xong, Cloudflare tự điền token vào hidden input
     → chờ token như mode click/auto.
     """
+    global _CAMOUFOX_CAPTCHA_INSTALL_ATTEMPTED  # noqa: PLW0603
     try:
         from camoufox_captcha import solve_captcha  # type: ignore
-    except ImportError as exc:
-        raise EventistaError(
-            "captcha_mode=camoufox nhưng chưa cài camoufox-captcha "
-            "(pip install camoufox-captcha)"
-        ) from exc
+    except ImportError:
+        if not _CAMOUFOX_CAPTCHA_INSTALL_ATTEMPTED:
+            _CAMOUFOX_CAPTCHA_INSTALL_ATTEMPTED = True
+            if log:
+                log("camoufox-captcha chưa cài — đang tự cài pip install camoufox-captcha...")
+            try:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        "-m",
+                        "pip",
+                        "install",
+                        "camoufox-captcha",
+                        "--disable-pip-version-check",
+                        "--no-input",
+                    ],
+                    check=True,
+                )
+                from camoufox_captcha import solve_captcha  # type: ignore  # noqa: F401
+
+                if log:
+                    log("camoufox-captcha đã cài xong — tiếp tục solve")
+            except Exception as exc:  # noqa: BLE001
+                raise EventistaError(
+                    "captcha_mode=camoufox nhưng chưa cài camoufox-captcha "
+                    f"(pip install camoufox-captcha thất bại: {exc})"
+                ) from exc
+        else:
+            raise EventistaError(
+                "captcha_mode=camoufox nhưng chưa cài camoufox-captcha "
+                "(pip install camoufox-captcha)"
+            ) from None
 
     container = page.locator(container_selector).first
     try:

@@ -55,7 +55,7 @@ from .eventista import (
     _solve_turnstile,
 )
 from .mail_reader import _refresh_access
-from .vote import VoteError, _do_login, _open_login_dialog
+from .vote import AlreadyConvertedError, VoteError, _do_login, _open_login_dialog
 
 _log = logging.getLogger(__name__)
 
@@ -116,6 +116,7 @@ class ChangeEmailJob:
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
+    retry_count: int = 0
     # Auth artifacts giữ in-memory (KHÔNG vào to_dict — tránh leak qua SSE).
     _old_password: str | None = field(default=None, repr=False)
     _new_password: str | None = field(default=None, repr=False)
@@ -406,6 +407,8 @@ async def _do_change_email_request(
     await _open_login_dialog(page, log)
     try:
         await _do_login(page, email=old_email, password=old_password, log=log)
+    except AlreadyConvertedError:
+        raise
     except VoteError as exc:
         raise ChangeEmailError(
             f"{exc} — gợi ý: account có thể đã đổi email ở lần chạy trước "
@@ -509,6 +512,13 @@ class ChangeEmailManager:
         self._min_seconds: float = 0.0
         self._used_accounts: set[str] = set()
         self._used_mailboxes: set[str] = set()
+        # Auto-retry cho lỗi transient (proxy chết, Turnstile timeout, popup chưa hiện...)
+        # Mặc định bật để khớp behaviour Reg (JobManager auto_retry). Fatal như
+        # "đã được sử dụng" sẽ không retry (xem _is_fatal).
+        self._auto_retry: bool = True
+        self._auto_retry_max: int = 3
+        self._auto_retry_delay: float = 15.0
+        self._delayed_requeue_tasks: dict[str, asyncio.Task] = {}
 
         self.jobs: dict[str, ChangeEmailJob] = {}
         self.order: list[str] = []
@@ -628,6 +638,92 @@ class ChangeEmailManager:
             raise ValueError(f"job_timeout phải trong [30, 3600], nhận {value}")
         self._job_timeout = float(value)
 
+    def set_auto_retry(self, enabled: bool, *, max_retries: int | None = None, delay: float | None = None) -> None:
+        self._auto_retry = bool(enabled)
+        if max_retries is not None:
+            self._auto_retry_max = max(1, min(max_retries, 10))
+        if delay is not None:
+            self._auto_retry_delay = max(5.0, min(delay, 120.0))
+
+    @property
+    def auto_retry(self) -> bool:
+        return self._auto_retry
+
+    @property
+    def auto_retry_max(self) -> int:
+        return self._auto_retry_max
+
+    @property
+    def auto_retry_delay(self) -> float:
+        return self._auto_retry_delay
+
+    # ── Auto-retry helpers (mirror JobManager) ──
+    _NO_RETRY_KEYS = (
+        "đã được sử dụng",
+        "đã được chuyển đổi",
+        "alreadyconverted",
+        "invalid_grant",
+        "AADSTS",
+        "OutlookComboError",
+        "combo dead",
+        "email không hợp lệ",
+        "thiếu field",
+        "camoufox-captcha",
+        "chưa cài",
+        "chua cai",
+        "chưa cấu hình",
+        "chua cau hinh",
+        "yescaptcha_key",
+        "không trích được Turnstile sitekey",
+    )
+
+    def _is_fatal(self, error: str | None) -> bool:
+        if not error:
+            return False
+        low = error.lower()
+        return any(k.lower() in low for k in self._NO_RETRY_KEYS)
+
+    async def _maybe_auto_retry(self, job: ChangeEmailJob) -> bool:
+        if not self._auto_retry:
+            return False
+        if self._is_fatal(job.error):
+            self._job_log(job, "[auto-retry] lỗi fatal — không retry")
+            return False
+        if job.retry_count >= self._auto_retry_max:
+            self._job_log(job, f"[auto-retry] đã retry {job.retry_count}/{self._auto_retry_max} lần — dừng")
+            return False
+        # Proxy lỗi network → đã mark_dead ở _handle_browser_failure, retry sẽ lấy proxy mới
+        job.retry_count += 1
+        delay = self._auto_retry_delay * job.retry_count
+        self._job_log(job, f"[auto-retry] sẽ retry {job.retry_count}/{self._auto_retry_max} sau {delay:.0f}s")
+        job.status = "queued"
+        job.error = None
+        job.started_at = None
+        job.finished_at = None
+        self._broadcast_job(job)
+        self._schedule_delayed_requeue(job.id, delay)
+        return True
+
+    def _schedule_delayed_requeue(self, job_id: str, delay: float) -> None:
+        async def _runner() -> None:
+            try:
+                await asyncio.sleep(delay)
+                job = self.jobs.get(job_id)
+                if job is None or job.status != "queued":
+                    return
+                self._job_queue.put_nowait(job_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover
+                _log.error("change_email delayed requeue %s failed: %s", job_id, exc)
+
+        existing = self._delayed_requeue_tasks.get(job_id)
+        if existing and not existing.done():
+            existing.cancel()
+        task = asyncio.create_task(_runner())
+        self._delayed_requeue_tasks[job_id] = task
+        task.add_done_callback(lambda _t, jid=job_id: self._delayed_requeue_tasks.pop(jid, None) if self._delayed_requeue_tasks.get(jid) is _t else None)
+
     def apply_settings(self, settings: dict) -> None:
         """Hydrate fields từ settings dict (startup boot). Best-effort."""
         if "change_email.max_concurrent" in settings:
@@ -676,6 +772,16 @@ class ChangeEmailManager:
             val = settings["change_email.used_mailboxes"]
             if isinstance(val, list):
                 self._used_mailboxes = {str(v) for v in val if isinstance(v, str)}
+        if "change_email.auto_retry" in settings:
+            self._auto_retry = bool(settings["change_email.auto_retry"])
+        if "change_email.auto_retry_max" in settings:
+            val = int(settings["change_email.auto_retry_max"])
+            if 1 <= val <= 10:
+                self._auto_retry_max = val
+        if "change_email.auto_retry_delay" in settings:
+            val = float(settings["change_email.auto_retry_delay"])
+            if 5 <= val <= 120:
+                self._auto_retry_delay = val
 
     def to_config_dict(self) -> dict[str, Any]:
         return {
@@ -690,6 +796,9 @@ class ChangeEmailManager:
             "poll_timeout_seconds": self._poll_timeout_seconds,
             "yescaptcha_key": self._yescaptcha_key or "",
             "min_seconds": self._min_seconds,
+            "auto_retry": self._auto_retry,
+            "auto_retry_max": self._auto_retry_max,
+            "auto_retry_delay": self._auto_retry_delay,
             "used_accounts": self.used_accounts,
             "used_mailboxes": self.used_mailboxes,
         }
@@ -1086,10 +1195,32 @@ class ChangeEmailManager:
             job.error = "cancelled by user"
             self._job_log(job, "✗ Job bị huỷ")
             raise
+        except AlreadyConvertedError as exc:
+            converted = getattr(exc, "converted_email", None)
+            if converted and converted.lower() != job.new_email.lower():
+                self._job_log(
+                    job,
+                    f"● Lưu ý: đã chuyển sang {converted} (khác mailbox yêu cầu {job.new_email}) — output theo thực tế",
+                )
+                job.new_email = converted
+            self._job_log(
+                job,
+                f"✓ Tài khoản đã được chuyển đổi trước đó sang {job.new_email} — đưa output luôn",
+            )
+            job.status = "success"
+            job.error = None
+            try:
+                self._mark_used(job)
+                self._job_log(job, "● Đã đánh dấu account + mailbox đã dùng (already-converted)")
+            except Exception as exc2:  # noqa: BLE001
+                self._job_log(job, f"mark used fail: {exc2}")
         except asyncio.TimeoutError:
             job.error = f"job timeout sau {int(self._job_timeout)}s"
             job.status = "error"
             self._job_log(job, f"✗ {job.error}")
+            await self._handle_browser_failure(job, TimeoutError(job.error))
+            if await self._maybe_auto_retry(job):
+                self._job_log(job, "↻ Auto-retry đã requeue job (timeout)")
         except (ChangeEmailError, VoteError, EventistaError) as exc:
             job.error = _short_error(str(exc))
             job.status = "error"
@@ -1097,11 +1228,18 @@ class ChangeEmailManager:
             # Mailbox bị site chặn ("Email đã được sử dụng") → không bao giờ đổi
             # sang được → đánh dấu đã dùng để lần chạy sau không pick lại.
             self._mark_mailbox_rejected(job, exc)
+            # Các lỗi transient như Turnstile, popup, tab, proxy... sẽ auto-retry
+            # nếu còn quota (fatal như "đã được sử dụng" đã bị _is_fatal chặn)
+            await self._handle_browser_failure(job, exc)
+            if await self._maybe_auto_retry(job):
+                self._job_log(job, "↻ Auto-retry đã requeue job")
         except Exception as exc:  # noqa: BLE001
             await self._handle_browser_failure(job, exc)
             job.error = _short_error(f"{type(exc).__name__}: {exc}")
             job.status = "error"
             self._job_log(job, f"✗ {job.error}")
+            if await self._maybe_auto_retry(job):
+                self._job_log(job, "↻ Auto-retry đã requeue job (browser error)")
         else:
             if proxy and self._min_seconds > 0:
                 elapsed = time.monotonic() - start_mono

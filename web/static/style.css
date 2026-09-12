@@ -4113,15 +4113,37 @@ body[data-hide-reg="1"] .tab-btn[data-tab="reg"] {
   border-radius: 6px;
 }
 
-/* Log gọn — 1-2 dòng, tự cuộn, không ép chiều cao card */
+/* Log gọn — 1 dòng duy nhất, tự cuộn, không ép chiều cao card */
 #tab-change-email .card-log {
   min-height: 0;
 }
 
 #tab-change-email .card-log .log-pane {
-  max-height: 70px;
+  max-height: 90px;
   min-height: 0;
+  padding: 3px 8px;
   overflow-y: auto;
+  overflow-x: hidden;
+  line-height: 1.3;
+}
+
+#tab-change-email .ev-log-entry {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#tab-change-email .ev-log-head {
+  display: none;
+}
+
+#tab-change-email .ev-log-msg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #tab-change-email .card-success .output-pane,

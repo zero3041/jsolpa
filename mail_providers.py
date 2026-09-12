@@ -409,12 +409,39 @@ class OutlookCombo:
 
     @classmethod
     def parse(cls, combo: str) -> "OutlookCombo":
-        parts = combo.split("|")
-        if len(parts) != 4:
+        raw = combo.strip()
+        parts = raw.split("|")
+        # Hỗ trợ format mở rộng: email|password|refresh_token|client_id[|extra...]
+        # - Nếu có dấu "|" trong password -> split ra >4 phần, cần ghép lại.
+        # - Nếu có thêm field cuối kiểu fvia (arianni@fviainboxes.com) -> bỏ qua.
+        if len(parts) == 4:
+            email, password, refresh_token, client_id = (p.strip() for p in parts)
+        elif len(parts) > 4:
+            # Tìm refresh_token (bắt đầu M.C) và client_id (UUID) từ cuối
+            rt_idx = -1
+            for i, p in enumerate(parts):
+                if p.strip().startswith("M.C"):
+                    rt_idx = i
+                    break
+            if rt_idx == -1:
+                # Không tìm thấy M.C -> fallback lấy 4 phần đầu
+                email, password, refresh_token, client_id = (p.strip() for p in parts[:4])
+            else:
+                # client_id ngay sau refresh_token
+                if rt_idx + 1 >= len(parts):
+                    raise OutlookComboError(
+                        f"combo thiếu client_id sau refresh_token, nhận {len(parts)} phần"
+                    )
+                email = parts[0].strip()
+                # password là phần giữa email và refresh_token, có thể chứa "|"
+                password = "|".join(parts[1:rt_idx]).strip()
+                refresh_token = parts[rt_idx].strip()
+                client_id = parts[rt_idx + 1].strip()
+                # Phần thừa sau client_id (vd fvia) được bỏ qua — vẫn dùng được
+        else:
             raise OutlookComboError(
                 f"combo phải có 4 phần (email|password|refresh_token|client_id), nhận {len(parts)}"
             )
-        email, password, refresh_token, client_id = (p.strip() for p in parts)
         if not email or "@" not in email:
             raise OutlookComboError(f"email không hợp lệ: {email!r}")
         if not refresh_token.startswith("M.C"):
