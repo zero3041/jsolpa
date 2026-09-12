@@ -24,6 +24,8 @@ Proxy: qua proxy pool config (`_resolve_job_proxy`).
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import logging
 import random
 import re
@@ -41,6 +43,9 @@ _log = logging.getLogger(__name__)
 
 _SITE_URL = "https://tinhhasayhi.1vote.vn"
 _DEFAULT_CANDIDATE = "Anh Trai JSOL"
+_DEFAULT_CATEGORY = "THE GROUP PERFORMANCE ICON"
+# Marker của API vote (response chứa extraData base64 — giải mã lấy data vote).
+_VOTING_FREE_MARKER = "voting-free"
 _MAX_LOG_LINES = 2000
 # Thời gian chờ tối đa cho mỗi giai đoạn (giây).
 _LOGIN_VERIFY_SECONDS = 30.0
@@ -49,6 +54,24 @@ _SUCCESS_WAIT_SECONDS = 30.0
 # IP echo endpoint (dual-stack, CORS mở) — dùng để lấy public IP qua proxy.
 _IP_ECHO_URL = "https://api64.ipify.org?format=json"
 _DEFAULT_MIN_SECONDS = 60.0  # job qua proxy tối thiểu bao lâu (proxy xoay IP mỗi 60s)
+
+# Helper JS: visible THẬT (giống bên Đổi Email) — loại display:none,
+# visibility:hidden, opacity:0, ancestor height/width = 0 (panel ẩn kiểu
+# grid-rows-[0fr] của site vẫn có offsetParent non-null → lọc sai).
+_VISIBLE_FN = """
+function __ceVisible(el) {
+  if (!el) return false;
+  let node = el;
+  while (node && node !== document.body) {
+    const r = node.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    const st = getComputedStyle(node);
+    if (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') return false;
+    node = node.parentElement;
+  }
+  return true;
+}
+"""
 
 
 class VoteError(Exception):
@@ -93,6 +116,8 @@ class VoteJob:
     _proxy_used: str | None = field(default=None, repr=False)
     _proxy_line: str | None = field(default=None, repr=False)
     _public_ip: str | None = field(default=None, repr=False)
+    # Data vote từ API (decode extraData): vote cho ai, điểm, lượt còn lại.
+    vote_result: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +126,7 @@ class VoteJob:
             "status": self.status,
             "error": self.error,
             "engine": self.engine,
+            "vote_result": self.vote_result,
             "created_at": self.created_at,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
@@ -245,69 +271,84 @@ async def _click_candidate_vote(
 ) -> None:
     """Tìm candidate card → bấm nút "Bình chọn" trong card đó.
 
-    Card là `.candidate-card-dark` chứa `<img alt="<candidate>">`. Nếu không
-    tìm thấy theo alt, fallback bấm button "Bình chọn" visible đầu tiên.
+    Y hệt bên Đổi Email: dùng __ceVisible (panel ẩn opacity/0-height bị loại)
+    + poll tới 20s chờ card render sau khi bấm tab hạng mục.
     """
-    clicked = await page.evaluate(
-        """(candidate) => {
-            const imgs = [...document.querySelectorAll(`img[alt="${candidate}"]`)];
-            for (const img of imgs) {
-                let card = img.closest('.candidate-card-dark');
-                if (!card) continue;
-                const btn = [...card.querySelectorAll('button')].find(
-                    b => b.innerText.includes('Bình chọn')
-                );
-                if (btn && btn.offsetParent !== null) {
+    deadline = time.monotonic() + 20.0
+    fallback_at = time.monotonic() + 10.0
+    fallback_tried = False
+    while time.monotonic() < deadline:
+        clicked = await page.evaluate(
+            "(candidate) => { " + _VISIBLE_FN + """
+                const imgs = [...document.querySelectorAll('img[alt]')];
+                for (const img of imgs) {
+                    if ((img.getAttribute('alt') || '').trim() !== candidate) continue;
+                    const card = img.closest('.candidate-card-dark');
+                    if (!card) continue;
+                    const btn = [...card.querySelectorAll('button')].find(
+                        b => __ceVisible(b) && (b.innerText || '').includes('Bình chọn')
+                    );
+                    if (btn) { btn.click(); return true; }
+                }
+                return false;
+            }""",
+            candidate,
+        )
+        if clicked:
+            log(f"● Bấm Bình chọn — {candidate}")
+            return
+        if not fallback_tried and time.monotonic() >= fallback_at:
+            fallback_tried = True
+            # Chờ 10s cho card render; vẫn không khớp candidate → fallback bấm
+            # nút "Bình chọn" visible đầu tiên (candidate sai/đổi tên).
+            clicked = await page.evaluate(
+                "() => { " + _VISIBLE_FN + """
+                    const btn = [...document.querySelectorAll('button')].find(
+                        b => __ceVisible(b) && (b.innerText || '').includes('Bình chọn')
+                    );
+                    if (!btn) return false;
                     btn.click();
                     return true;
-                }
-            }
-            return false;
-        }""",
-        candidate,
+                }"""
+            )
+            if clicked:
+                log("● Bấm Bình chọn (fallback — không khớp candidate card)")
+                return
+        await asyncio.sleep(1.0)
+    raise VoteError(
+        f"không tìm thấy nút Bình chọn cho candidate {candidate!r} "
+        "(chờ card render sau khi mở tab hạng mục quá lâu)"
     )
-    if not clicked:
-        # Fallback: bấm nút "Bình chọn" visible đầu tiên trên trang.
-        clicked = await page.evaluate(
-            """() => {
-                const btn = [...document.querySelectorAll('button')].find(
-                    b => b.innerText.includes('Bình chọn') && b.offsetParent !== null
-                );
-                if (!btn) return false;
-                btn.click();
-                return true;
-            }"""
-        )
-        if not clicked:
-            raise VoteError("không tìm thấy nút Bình chọn trên trang")
-        log("● Bấm Bình chọn (fallback — không khớp candidate card)")
-    else:
-        log(f"● Bấm Bình chọn — {candidate}")
 
 
 async def _click_vote_package(page: Any, log: Callable[[str], None]) -> None:
-    """Trong popup vote, chọn gói "1 vote" (button chứa text bắt đầu "1 vote").
+    """Trong popup vote, chọn gói "1 vote" (ưu tiên "Vote tặng" như bên Đổi Email).
 
-    Popup mở có animation — poll retry tới deadline thay vì evaluate 1 lần.
+    Popup mở có animation — poll retry tới deadline. Dùng __ceVisible để loại
+    panel ẩn (opacity/0-height).
     """
     deadline = time.monotonic() + 15.0
     while time.monotonic() < deadline:
         clicked = await page.evaluate(
-            """() => {
-                const btn = [...document.querySelectorAll('button')].find(
-                    b => b.innerText.trim().startsWith('1 vote')
-                      && b.offsetParent !== null
-                );
+            "() => { " + _VISIBLE_FN + """
+                const btns = [...document.querySelectorAll('button')].filter(__ceVisible);
+                const pick = (fn) => btns.find(fn);
+                const btn = pick(b => (b.innerText || '').includes('Vote tặng'))
+                    || pick(b => {
+                        const t = b.innerText || '';
+                        return t.includes('1 vote') && t.includes('Chuyển đổi');
+                    })
+                    || pick(b => (b.innerText || '').trim().startsWith('1 vote'));
                 if (!btn) return false;
                 btn.click();
                 return true;
             }"""
         )
         if clicked:
-            log("● Chọn gói 1 vote")
+            log("● Chọn gói 1 vote (Vote tặng)")
             return
         await asyncio.sleep(1.0)
-    raise VoteError("không tìm thấy gói '1 vote' trong popup")
+    raise VoteError("không tìm thấy gói '1 vote' (Vote tặng) trong popup")
 
 
 async def _open_video(page: Any, log: Callable[[str], None]) -> None:
@@ -415,32 +456,64 @@ async def _wait_video_done(page: Any, log: Callable[[str], None]) -> None:
     )
 
 
-async def _confirm_vote(page: Any, log: Callable[[str], None]) -> None:
-    """Bấm "Bình chọn ngay" → chờ modal "Thành công"."""
-    try:
-        await page.locator('button:has-text("Bình chọn ngay")').first.click(timeout=10000)
-    except Exception as exc:  # noqa: BLE001
-        raise VoteError(f"không bấm được Bình chọn ngay: {exc}") from exc
-    log("● Bấm Bình chọn ngay — chờ xác nhận...")
+async def _confirm_vote(page: Any, log: Callable[[str], None]) -> dict[str, Any] | None:
+    """Bấm "Bình chọn ngay" → chờ modal "Thành công".
 
-    deadline = time.monotonic() + _SUCCESS_WAIT_SECONDS
-    while time.monotonic() < deadline:
-        await asyncio.sleep(1.5)
-        try:
-            ok = await page.evaluate(
-                """() => {
-                    const el = [...document.querySelectorAll('h3')].find(
-                        h => h.innerText.includes('Thành công')
-                    );
-                    return !!(el && el.offsetParent !== null);
-                }"""
-            )
-        except Exception:  # noqa: BLE001
-            ok = False
-        if ok:
-            log("✓ Bình chọn thành công")
+    Bắt response API `voting-free` → decode extraData → trả data vote
+    (vote cho ai, điểm, lượt còn lại) hoặc None nếu không bắt được.
+    """
+    captured: dict[str, Any] = {}
+
+    def _on_response(resp: Any) -> None:
+        if _VOTING_FREE_MARKER not in (resp.url or ""):
             return
-    raise VoteError("không thấy modal Thành công sau khi bấm Bình chọn ngay")
+        try:
+            body = resp.json()
+        except Exception:  # noqa: BLE001
+            return
+        if not isinstance(body, dict) or body.get("errorCode") != 0:
+            return
+        captured["body"] = body
+
+    page.on("response", _on_response)
+    try:
+        try:
+            await page.locator('button:has-text("Bình chọn ngay")').first.click(timeout=10000)
+        except Exception as exc:  # noqa: BLE001
+            raise VoteError(f"không bấm được Bình chọn ngay: {exc}") from exc
+        log("● Bấm Bình chọn ngay — chờ xác nhận...")
+
+        deadline = time.monotonic() + _SUCCESS_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            await asyncio.sleep(1.5)
+            try:
+                ok = await page.evaluate(
+                    """() => {
+                        const el = [...document.querySelectorAll('h3')].find(
+                            h => h.innerText.includes('Thành công')
+                        );
+                        return !!(el && el.offsetParent !== null);
+                    }"""
+                )
+            except Exception:  # noqa: BLE001
+                ok = False
+            if ok:
+                break
+        else:
+            raise VoteError("không thấy modal Thành công sau khi bấm Bình chọn ngay")
+    finally:
+        try:
+            page.remove_listener("response", _on_response)
+        except Exception:  # noqa: BLE001
+            pass
+
+    result = _build_vote_result(captured["body"]) if "body" in captured else None
+    if result:
+        summary = _format_vote_result(result)
+        log(f"✓ Bình chọn thành công — {summary}" if summary else "✓ Bình chọn thành công")
+    else:
+        log("✓ Bình chọn thành công (không bắt được response API vote)")
+    return result
 
 
 async def _fetch_public_ip(page: Any) -> str | None:
@@ -463,18 +536,98 @@ async def _fetch_public_ip(page: Any) -> str | None:
         return None
 
 
+# ── Category tab + Vote result ──────────────────────────────────────────
+
+
+async def _click_category_tab(page: Any, category: str, *, log: Callable[[str], None]) -> None:
+    """Mở tab hạng mục (giống tab Đổi Email) — text khớp case-insensitive.
+
+    Category rỗng → skip (giữ nguyên hành vi cũ: bấm Bình chọn trực tiếp).
+    """
+    if not (category or "").strip():
+        return
+    deadline = time.monotonic() + 20.0
+    while time.monotonic() < deadline:
+        clicked = await page.evaluate(
+            """(cat) => {
+                const btns = [...document.querySelectorAll('button')];
+                const btn = btns.find(
+                    b => b.offsetParent !== null
+                      && (b.innerText || '').toUpperCase().includes(cat.toUpperCase())
+                );
+                if (!btn) return false;
+                btn.click();
+                return true;
+            }""",
+            category,
+        )
+        if clicked:
+            log(f"● Mở tab hạng mục: {category}")
+            return
+        await asyncio.sleep(1.0)
+    raise VoteError(f"không tìm thấy tab hạng mục {category!r}")
+
+
+def _decode_vote_extra(extra: str) -> dict[str, Any]:
+    """Giải mã `extraData` (base64 JSON) trong response API vote."""
+    if not extra:
+        return {}
+    try:
+        padded = extra + "=" * (-len(extra) % 4)
+        raw = base64.b64decode(padded)
+        data = json.loads(raw.decode("utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 — không decode được thì bỏ qua
+        return {}
+
+
+def _build_vote_result(body: dict[str, Any]) -> dict[str, Any] | None:
+    """Trích data vote từ response `voting-free`: vote cho ai, điểm, lượt còn."""
+    data = body.get("data") or {}
+    info = _decode_vote_extra(data.get("extraData") or "")
+    return {
+        "product": ((info.get("product") or {}).get("name") or "").strip(),
+        "event": ((info.get("event") or {}).get("name") or "").strip(),
+        "point": (info.get("pointPackage") or {}).get("point") or 0,
+        "current_point": info.get("current_point"),
+        "total_point": info.get("total_point"),
+        "remaining_free_votes": data.get("remainingFreeVotes"),
+        "next_vote_in_seconds": data.get("nextVoteInSeconds"),
+        "next_vote_time": data.get("nextVoteTime"),
+    }
+
+
+def _format_vote_result(result: dict[str, Any]) -> str:
+    """Đọc data vote thành 1 dòng log ngắn gọn."""
+    parts = []
+    if result.get("product"):
+        parts.append(f"vote cho {result['product']}")
+    if result.get("point"):
+        parts.append(f"+{result['point']} điểm")
+    if result.get("total_point") is not None:
+        parts.append(f"tổng {result['total_point']}")
+    if result.get("remaining_free_votes") is not None:
+        parts.append(f"còn {result['remaining_free_votes']} lượt free")
+    if result.get("next_vote_in_seconds") is not None:
+        parts.append(f"vote lại sau {result['next_vote_in_seconds']}s")
+    if result.get("event"):
+        parts.append(f"({result['event']})")
+    return " — ".join(parts) if parts else ""
+
+
 async def _do_vote(
     page: Any,
     *,
     email: str,
     password: str,
     candidate: str,
+    category: str,
     confirm_vote: bool,
     log: Callable[[str], None],
-) -> str | None:
+) -> tuple[str | None, dict[str, Any] | None]:
     """Thực hiện flow bình chọn trên trang. Raise VoteError nếu fail.
 
-    Trả về public IP đang dùng (None nếu không lấy được).
+    Trả về (public IP đang dùng, vote_result từ API nếu confirm_vote).
     """
     log(f"● Mở trang đích {_SITE_URL}")
     await page.goto(_SITE_URL, wait_until="domcontentloaded", timeout=60000)
@@ -487,16 +640,18 @@ async def _do_vote(
 
     await _open_login_dialog(page, log)
     await _do_login(page, email=email, password=password, log=log)
+    await _click_category_tab(page, category, log=log)
     await _click_candidate_vote(page, candidate=candidate, log=log)
     await _click_vote_package(page, log)
     await _open_video(page, log)
     await _wait_video_done(page, log)
 
+    vote_result: dict[str, Any] | None = None
     if confirm_vote:
-        await _confirm_vote(page, log)
+        vote_result = await _confirm_vote(page, log)
     else:
         log("● Dry-run: dừng trước bước bấm Bình chọn ngay (chưa vote thật)")
-    return public_ip
+    return public_ip, vote_result
 
 
 # ── Manager ──────────────────────────────────────────────────────────────
@@ -515,6 +670,7 @@ class VoteManager:
         self._headless: bool = False
         self._use_proxy: bool = True
         self._candidate: str = _DEFAULT_CANDIDATE
+        self._category: str = _DEFAULT_CATEGORY
         self._confirm_vote: bool = False
         self._min_seconds: float = _DEFAULT_MIN_SECONDS
 
@@ -552,6 +708,10 @@ class VoteManager:
         return self._candidate
 
     @property
+    def category(self) -> str:
+        return self._category
+
+    @property
     def confirm_vote(self) -> bool:
         return self._confirm_vote
 
@@ -583,6 +743,10 @@ class VoteManager:
         if not value:
             raise ValueError("candidate không được rỗng")
         self._candidate = value
+
+    def set_category(self, value: str) -> None:
+        """Category tab — rỗng = bỏ qua bước mở tab (giữ flow cũ)."""
+        self._category = (value or "").strip()
 
     def set_confirm_vote(self, value: bool) -> None:
         self._confirm_vote = bool(value)
@@ -619,6 +783,10 @@ class VoteManager:
             value = (settings["vote.candidate"] or "").strip()
             if value:
                 self._candidate = value
+        if "vote.category" in settings:
+            value = (settings["vote.category"] or "").strip()
+            if value:
+                self._category = value
         if "vote.confirm_vote" in settings:
             self._confirm_vote = bool(settings["vote.confirm_vote"])
         if "vote.min_seconds" in settings:
@@ -634,6 +802,7 @@ class VoteManager:
             "headless": self._headless,
             "use_proxy": self._use_proxy,
             "candidate": self._candidate,
+            "category": self._category,
             "confirm_vote": self._confirm_vote,
             "min_seconds": self._min_seconds,
         }
@@ -952,11 +1121,12 @@ class VoteManager:
             engine, headless=self._headless, proxy=proxy
         )
         try:
-            job._public_ip = await _do_vote(
+            job._public_ip, job.vote_result = await _do_vote(
                 page,
                 email=job.email,
                 password=job._password,
                 candidate=self._candidate,
+                category=self._category,
                 confirm_vote=self._confirm_vote,
                 log=lambda m: self._job_log(job, m),
             )

@@ -180,6 +180,15 @@
     return 'status-cancelled';
   }
 
+  function fmtDuration(j) {
+    const start = j.started_at;
+    if (!start) return '';
+    const end = j.finished_at || (Date.now() / 1000);
+    const s = Math.max(0, Math.round(end - start));
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
+
   function render() {
     const jobs = _state.jobs || [];
     ensureSelection();
@@ -206,6 +215,7 @@
       const sub = j.new_email
         ? `<div class="job-detail muted">→ ${escHtml(j.new_email)}</div>`
         : '';
+      const dur = fmtDuration(j);
       return `
         <div class="job change-email-job${j.id === _selectedJobId ? ' selected' : ''}" data-job-id="${escHtml(j.id)}">
           <div class="job-status ${jobStatusClass(j.status)}">${escHtml(j.status)}</div>
@@ -214,7 +224,7 @@
             ${sub}
             ${err}
           </div>
-          <div class="job-duration">${escHtml(j.engine)}</div>
+          <div class="job-duration">${escHtml(j.engine)}${dur ? ` · ${dur}` : ''}</div>
           <div class="job-actions">
             <button class="icon-btn" data-action="view-log" data-job-id="${escHtml(j.id)}" title="Xem log">${window.GptUi.icon('list') || '📄'}</button>
             ${j.status === 'queued' || j.status === 'running'

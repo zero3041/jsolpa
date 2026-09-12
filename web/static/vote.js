@@ -15,6 +15,7 @@
     input: document.getElementById('vt-combo-input'),
     engine: document.getElementById('vt-engine'),
     candidate: document.getElementById('vt-candidate'),
+    category: document.getElementById('vt-category'),
     maxConcurrent: document.getElementById('vt-max-concurrent'),
     jobTimeout: document.getElementById('vt-job-timeout'),
     minSeconds: document.getElementById('vt-min-seconds'),
@@ -96,6 +97,7 @@
       dom.engine.value = cfg.engine;
     }
     if (cfg.candidate) dom.candidate.value = cfg.candidate;
+    if (typeof cfg.category === 'string') dom.category.value = cfg.category;
     if (cfg.max_concurrent) dom.maxConcurrent.value = cfg.max_concurrent;
     if (cfg.job_timeout) dom.jobTimeout.value = cfg.job_timeout;
     if (typeof cfg.min_seconds === 'number') dom.minSeconds.value = cfg.min_seconds;
@@ -115,6 +117,7 @@
     const payload = {
       engine: dom.engine.value,
       candidate: dom.candidate.value || null,
+      category: dom.category.value || '',
       max_concurrent: parseInt(dom.maxConcurrent.value || '1', 10),
       job_timeout: parseInt(dom.jobTimeout.value || '600', 10),
       min_seconds: parseInt(dom.minSeconds.value || '60', 10),
@@ -137,6 +140,15 @@
     if (status === 'running') return 'status-running';
     if (status === 'queued') return 'status-queued';
     return 'status-cancelled';
+  }
+
+  function fmtDuration(j) {
+    const start = j.started_at;
+    if (!start) return '';
+    const end = j.finished_at || (Date.now() / 1000);
+    const s = Math.max(0, Math.round(end - start));
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
   }
 
   function render() {
@@ -162,14 +174,25 @@
       const err = fullErr
         ? `<div class="job-detail muted" style="color:var(--red)" title="${escHtml(fullErr)}">${escHtml(shortErr)}</div>`
         : '';
+      const vr = j.vote_result;
+      const voteLine = vr
+        ? `<div class="job-detail muted" title="${escHtml(JSON.stringify(vr))}">` +
+          `Vote: ${escHtml(vr.product || '?')} +${escHtml(vr.point ?? 0)}đ` +
+          (vr.total_point != null ? ` · tổng ${escHtml(vr.total_point)}` : '') +
+          (vr.remaining_free_votes != null ? ` · còn ${escHtml(vr.remaining_free_votes)} lượt free` : '') +
+          (vr.next_vote_in_seconds != null ? ` · sau ${escHtml(vr.next_vote_in_seconds)}s` : '') +
+          `</div>`
+        : '';
+      const dur = fmtDuration(j);
       return `
         <div class="job vote-job${j.id === _selectedJobId ? ' selected' : ''}" data-job-id="${escHtml(j.id)}">
           <div class="job-status ${jobStatusClass(j.status)}">${escHtml(j.status)}</div>
           <div class="job-main">
             <div class="job-email" title="${escHtml(j.email)}">${escHtml(j.email)}</div>
+            ${voteLine}
             ${err}
           </div>
-          <div class="job-duration">${escHtml(j.engine)}</div>
+          <div class="job-duration">${escHtml(j.engine)}${dur ? ` · ${dur}` : ''}</div>
           <div class="job-actions">
             <button class="icon-btn" data-action="view-log" data-job-id="${escHtml(j.id)}" title="Xem log">${window.GptUi.icon('list') || '📄'}</button>
             ${j.status === 'error' || j.status === 'cancelled'
@@ -358,7 +381,7 @@
       updateComboCount();
       persist();
     });
-    ['engine', 'candidate', 'maxConcurrent', 'jobTimeout', 'minSeconds',
+    ['engine', 'candidate', 'category', 'maxConcurrent', 'jobTimeout', 'minSeconds',
      'proxyToggle', 'headlessToggle', 'confirmToggle'].forEach((key) => {
       dom[key].addEventListener('change', saveConfig);
     });

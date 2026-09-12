@@ -990,7 +990,7 @@ body {
 
 /* Auto Vote tab — cùng cấu trúc grid với eventista. */
 #tab-vote .job.vote-job {
-  grid-template-columns: 80px minmax(0, 1fr) 72px auto;
+  grid-template-columns: 80px minmax(0, 1fr) 130px auto;
 }
 
 #tab-vote .card-jobs .job-list {
@@ -1012,7 +1012,11 @@ body {
 }
 
 #tab-vote .job.vote-job .job-duration {
-  display: none;
+  font-size: 11px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Luôn giữ một gutter/track nhìn thấy để danh sách dài có thể cuộn trong OBS
@@ -4025,11 +4029,15 @@ body[data-hide-reg="1"] .tab-btn[data-tab="reg"] {
 }
 
 #tab-change-email .job.change-email-job {
-  grid-template-columns: 80px minmax(0, 1fr) 72px auto;
+  grid-template-columns: 80px minmax(0, 1fr) 130px auto;
 }
 
 #tab-change-email .job.change-email-job .job-duration {
-  display: none;
+  font-size: 11px;
+  color: var(--fg-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Lịch sử account đã chạy (từ DB) — hiện dưới Jobs list */

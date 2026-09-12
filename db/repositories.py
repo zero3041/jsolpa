@@ -79,7 +79,7 @@ _EXACT_KEYS: frozenset[str] = frozenset([
     "eventista.yescaptcha_key",
     "vote.engine", "vote.headless", "vote.max_concurrent", "vote.use_proxy",
     "vote.job_timeout", "vote.candidate", "vote.confirm_vote",
-    "vote.min_seconds",
+    "vote.min_seconds", "vote.category",
     "change_email.engine", "change_email.headless",
     "change_email.max_concurrent", "change_email.use_proxy",
     "change_email.job_timeout", "change_email.candidate",
@@ -429,6 +429,13 @@ def _validate_type_constraint(key: str, value: Any) -> None:
         if not value.strip():
             raise RepositoryError(
                 "set", ValueError(f"{key}: must not be empty")
+            )
+        return
+
+    if key == "vote.category":
+        if not isinstance(value, str):
+            raise RepositoryError(
+                "set", TypeError(f"{key}: must be str, got {type(value).__name__}")
             )
         return
 

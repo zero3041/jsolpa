@@ -255,6 +255,7 @@ async def on_startup():
         "headless": vm.headless,
         "use_proxy": vm.use_proxy,
         "candidate": vm.candidate,
+        "category": vm.category,
         "confirm_vote": vm.confirm_vote,
         "jobs": vm.list_jobs(),
     }])
@@ -1801,6 +1802,12 @@ async def index() -> HTMLResponse:
     return HTMLResponse(html)
 
 
+@app.get("/api/asset-version")
+async def get_asset_version() -> JSONResponse:
+    """Version static assets — frontend poll để auto-reload khi file thay đổi."""
+    return JSONResponse({"version": _asset_version()})
+
+
 # ── GoPay Phone Checker: snap token endpoint ────────────────────────────────
 # Extension gọi endpoint này với access_token → trả midtrans URL + snap token.
 
@@ -2560,6 +2567,7 @@ class SetVoteConfigRequest(BaseModel):
     headless: bool | None = Field(default=None)
     use_proxy: bool | None = Field(default=None)
     candidate: str | None = Field(default=None)
+    category: str | None = Field(default=None)
     confirm_vote: bool | None = Field(default=None)
     min_seconds: float | None = Field(default=None, ge=0, le=300)
 
@@ -2574,6 +2582,7 @@ async def list_vote_jobs() -> JSONResponse:
         "headless": vm.headless,
         "use_proxy": vm.use_proxy,
         "candidate": vm.candidate,
+        "category": vm.category,
         "confirm_vote": vm.confirm_vote,
         "min_seconds": vm.min_seconds,
         "jobs": vm.list_jobs(),
@@ -2683,6 +2692,9 @@ async def set_vote_config(payload: SetVoteConfigRequest) -> JSONResponse:
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         settings_writes["vote.candidate"] = vm.candidate
+    if payload.category is not None:
+        vm.set_category(payload.category)
+        settings_writes["vote.category"] = vm.category
     if payload.confirm_vote is not None:
         vm.set_confirm_vote(payload.confirm_vote)
         settings_writes["vote.confirm_vote"] = payload.confirm_vote

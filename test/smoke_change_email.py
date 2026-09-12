@@ -102,12 +102,12 @@ async def _run(account: str, mailbox: str) -> int:
             log=_log,
         )
 
-        _log(f"● Đợi mail kích hoạt — poll tối đa {int(poll_timeout)}s")
+        _log(f"● Đợi mail kích hoạt — poll Graph trực tiếp (không proxy) tối đa {int(poll_timeout)}s")
         link: str | None = None
         deadline = time.monotonic() + poll_timeout
         while time.monotonic() < deadline:
             link = await _find_change_email_link(
-                combo_outlook, proxy=proxy, since=since, log=_log
+                combo_outlook, proxy=None, since=since, log=_log
             )
             if link:
                 break

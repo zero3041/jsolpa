@@ -453,7 +453,7 @@ async def _find_change_email_link(
             resp = await client.get(
                 "https://graph.microsoft.com/v1.0/me/messages",
                 params={
-                    "$top": 30,
+                    "$top": 5,
                     "$orderby": "receivedDateTime desc",
                     "$select": "subject,from,receivedDateTime,body,isRead",
                 },
@@ -1325,9 +1325,13 @@ class ChangeEmailManager:
             )
 
             # ── Poll mail hộp thư MỚI tìm link xác nhận ──
+            # Đọc mail qua Graph LUÔN chạy trực tiếp (không proxy) — proxy
+            # xoay IP hay chặn kết nối tới graph.microsoft.com gây
+            # ConnectTimeout spam, trong khi đọc mail local direct không lỗi.
             self._job_log(
                 job,
-                f"● Đợi mail kích hoạt — poll tối đa {int(self._poll_timeout_seconds)}s",
+                "● Đợi mail kích hoạt — poll Graph trực tiếp (không proxy) "
+                f"tối đa {int(self._poll_timeout_seconds)}s",
             )
             link: str | None = None
             deadline = time.monotonic() + self._poll_timeout_seconds
@@ -1335,7 +1339,7 @@ class ChangeEmailManager:
             while time.monotonic() < deadline:
                 try:
                     link = await _find_change_email_link(
-                        combo, proxy=proxy, since=since,
+                        combo, proxy=None, since=since,
                         log=lambda m: self._job_log(job, m),
                     )
                     if link:

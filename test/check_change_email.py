@@ -100,7 +100,8 @@ async def _check_reject_marks_mailbox() -> None:
 
     cm2._run_job_inner = _login_fail  # type: ignore[method-assign]
     await cm2._run_job(job2)
-    assert job2.status == "error", job2.status
+    # Auto-retry (transient, không fatal) requeue về queued — KHÔNG đánh dấu mailbox.
+    assert job2.status in ("error", "queued"), job2.status
     assert "m2@hotmail.com" not in cm2.used_mailboxes, cm2.used_mailboxes
 
 

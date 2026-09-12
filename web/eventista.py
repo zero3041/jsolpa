@@ -74,6 +74,18 @@ _YESCAPTCHA_CREATE_URL = "https://api.yescaptcha.com/createTask"
 _YESCAPTCHA_RESULT_URL = "https://api.yescaptcha.com/getTaskResult"
 _YESCAPTCHA_TIMEOUT = 120.0
 _CLOAKBROWSER_INSTALL_ATTEMPTED = False
+
+# Chạy headless → mute mọi video/audio (YouTube embed trong iframe cũng dính
+# vì add_init_script chạy trên cả child frame). Tránh âm thanh + autoplay
+# bị block ảnh hưởng countdown khi không có audio device.
+_MUTE_JS = """
+const __muteAll = () => {
+  const els = document.querySelectorAll('video, audio');
+  for (const m of els) { m.muted = true; m.volume = 0; }
+};
+__muteAll();
+document.addEventListener('play', () => setTimeout(__muteAll, 0), true);
+"""
 _CAMOUFOX_CAPTCHA_INSTALL_ATTEMPTED = False
 
 
@@ -315,6 +327,8 @@ async def _launch_browser(
         )
         browser = await cf.__aenter__()
         page = await browser.new_page()
+        if headless:
+            await page.add_init_script(_MUTE_JS)
 
         async def close() -> None:
             await cf.__aexit__(None, None, None)
@@ -357,6 +371,8 @@ async def _launch_browser(
         await context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
         )
+        if headless:
+            await context.add_init_script(_MUTE_JS)
         page = await context.new_page()
 
         async def close() -> None:

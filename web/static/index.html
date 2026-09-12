@@ -7,7 +7,7 @@
 <meta name="auth-token" content="__AUTH_TOKEN__" />
 <link rel="stylesheet" href="/static/style.css?v=__ASSET_VERSION__" />
 </head>
-<body data-hide-reg="__HIDE_REG__">
+<body data-hide-reg="__HIDE_REG__" data-asset-version="__ASSET_VERSION__">
 <header class="topbar">
   <div class="brand">
     <span class="brand-dot"></span>
@@ -507,6 +507,10 @@
         <label class="input-group config-field-long" title="Tên thí sinh cần bình chọn (khớp alt của ảnh)">
           <span class="input-label">Candidate</span>
           <input type="text" id="vt-candidate" value="Anh Trai JSOL" spellcheck="false" />
+        </label>
+        <label class="input-group config-field-long" title="Tab hạng mục cần mở trước khi tìm candidate (bỏ trống = không mở tab)">
+          <span class="input-label">Category tab</span>
+          <input type="text" id="vt-category" value="THE GROUP PERFORMANCE ICON" spellcheck="false" />
         </label>
         <label class="input-group config-field-short">
           <span class="input-label">Concurrency</span>
