@@ -1,7 +1,7 @@
 """Schema definitions — DDL strings và version management cho SQLite persistence layer."""
 
 # Schema version hiện tại. Tăng khi có thay đổi DDL.
-CURRENT_VERSION = 14
+CURRENT_VERSION = 15
 
 # --- DDL: Schema version tracking ---
 
@@ -308,6 +308,34 @@ DDL_CHANGE_EMAIL_JOBS_INDEXES = """\
 CREATE INDEX IF NOT EXISTS idx_change_email_jobs_status ON change_email_jobs(status);
 """
 
+# --- v15: Vote jobs (Auto Vote tab) ---
+# Persist lịch sử bình chọn: status + vote_result (JSON từ API voting-free).
+
+DDL_VOTE_JOBS = """\
+CREATE TABLE IF NOT EXISTS vote_jobs (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued'
+        CHECK(status IN ('queued', 'running', 'success', 'error', 'cancelled')),
+    error TEXT,
+    engine TEXT,
+    proxy_used TEXT,
+    public_ip TEXT,
+    vote_result TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    started_at TEXT,
+    finished_at TEXT
+);
+"""
+
+DDL_VOTE_JOBS_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_vote_jobs_status ON vote_jobs(status);
+"""
+
+DDL_VOTE_JOBS_FINISHED_INDEXES = """\
+CREATE INDEX IF NOT EXISTS idx_vote_jobs_finished ON vote_jobs(finished_at);
+"""
+
 # --- Ordered list tất cả DDL statements cho migration ---
 
 ALL_DDL: list[str] = [
@@ -343,6 +371,10 @@ ALL_DDL: list[str] = [
     # --- v14: Change Email jobs ---
     DDL_CHANGE_EMAIL_JOBS,
     DDL_CHANGE_EMAIL_JOBS_INDEXES,
+    # --- v15: Vote jobs ---
+    DDL_VOTE_JOBS,
+    DDL_VOTE_JOBS_INDEXES,
+    DDL_VOTE_JOBS_FINISHED_INDEXES,
 ]
 """Danh sách DDL theo thứ tự thực thi. Engine sẽ chạy lần lượt trong 1 transaction."""
 
@@ -662,5 +694,11 @@ MIGRATIONS: dict[int, list[str]] = {
     14: [
         DDL_CHANGE_EMAIL_JOBS,
         DDL_CHANGE_EMAIL_JOBS_INDEXES,
+    ],
+    # v15: Auto Vote tab — lịch sử bình chọn (status + vote_result JSON).
+    15: [
+        DDL_VOTE_JOBS,
+        DDL_VOTE_JOBS_INDEXES,
+        DDL_VOTE_JOBS_FINISHED_INDEXES,
     ],
 }

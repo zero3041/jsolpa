@@ -19,6 +19,7 @@ if TYPE_CHECKING:
         JobRepository,
         SessionResultRepository,
         SettingsRepository,
+        VoteJobRepository,
     )
 
 
@@ -123,3 +124,10 @@ def get_change_email_repo(engine: "DatabaseEngine") -> "ChangeEmailRepository":
     from .repositories import ChangeEmailRepository
 
     return ChangeEmailRepository(engine)
+
+
+def get_vote_repo(engine: "DatabaseEngine") -> "VoteJobRepository":
+    """Tạo và trả về VoteJobRepository instance (lịch sử Auto Vote)."""
+    from .repositories import VoteJobRepository
+
+    return VoteJobRepository(engine)

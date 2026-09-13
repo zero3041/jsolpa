@@ -558,7 +558,7 @@
     ['engine', 'candidate', 'category', 'captchaMode', 'maxConcurrent',
      'jobTimeout', 'pollTimeout', 'minSeconds', 'yescaptchaKey',
      'proxyToggle', 'headlessToggle'].forEach((key) => {
-      dom[key].addEventListener('change', saveConfig);
+      if (dom[key]) dom[key].addEventListener('change', saveConfig);
     });
     dom.btnRun.addEventListener('click', run);
     dom.btnStopAll.addEventListener('click', stopAll);

@@ -1295,4 +1295,29 @@
     }
     if (hasRunning) renderJobs();
   }, 1000);
+
+  // Auto-reload khi static assets thay đổi (dev: không cần F5 tay).
+  // Poll version mỗi 3s; version đổi → reload trang → nạp CSS/JS mới.
+  const _pageVersion = document.body && document.body.dataset.assetVersion;
+  if (_pageVersion) {
+    let _checking = false;
+    setInterval(async () => {
+      if (_checking) return;
+      _checking = true;
+      try {
+        const token = getAuthToken();
+        const resp = await fetch('/api/asset-version', {
+          headers: token ? { 'X-API-Token': token } : {},
+          cache: 'no-store',
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data.version && data.version !== _pageVersion) {
+          location.reload();
+        }
+      } catch (_) { /* server tạm không trả — bỏ qua */ } finally {
+        _checking = false;
+      }
+    }, 3000);
+  }
 })();

@@ -852,7 +852,7 @@ class ChangeEmailManager:
         except Exception as exc:  # noqa: BLE001
             _log.warning("change_email persist fail: %s", exc)
 
-    def list_history(self, *, limit: int = 1000) -> list[dict[str, Any]]:
+    def list_history(self, *, limit: int = 5000) -> list[dict[str, Any]]:
         """Lịch sử account đã chạy (từ DB) — mới nhất trước."""
         try:
             return self._repo().list_all(limit=limit)

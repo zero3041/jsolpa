@@ -53,7 +53,8 @@ _VIDEO_WATCH_SECONDS = 60.0
 _SUCCESS_WAIT_SECONDS = 30.0
 # IP echo endpoint (dual-stack, CORS mở) — dùng để lấy public IP qua proxy.
 _IP_ECHO_URL = "https://api64.ipify.org?format=json"
-_DEFAULT_MIN_SECONDS = 60.0  # job qua proxy tối thiểu bao lâu (proxy xoay IP mỗi 60s)
+# Không ép job chờ min duration (proxy xoay IP) — user muốn vote nhanh nhất.
+_DEFAULT_MIN_SECONDS = 0.0
 
 # Helper JS: visible THẬT (giống bên Đổi Email) — loại display:none,
 # visibility:hidden, opacity:0, ancestor height/width = 0 (panel ẩn kiểu
@@ -91,6 +92,13 @@ class AlreadyConvertedError(VoteError):
         self.converted_email = converted_email
 
 
+class AlreadyVotedError(VoteError):
+    """Account đã vote hôm nay (popup hiện "0/1 lượt — Cập nhật sau hh:mm:ss").
+
+    Manager bắt riêng → coi như SUCCESS (không vote lại, không retry).
+    """
+
+
 def _short_error(msg: str, limit: int = 160) -> str:
     """Rút gọn error cho job row: lấy dòng đầu tiên, cắt theo limit."""
     first = (msg or "").splitlines()[0] if (msg or "").splitlines() else ""
@@ -108,6 +116,7 @@ class VoteJob:
     log_lines: list[str] = field(default_factory=list)
     error: str | None = None
     engine: str = "camoufox"
+    retry_count: int = 0
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     finished_at: float | None = None
@@ -162,28 +171,41 @@ def _parse_combo(line: str) -> tuple[str, str]:
 
 async def _open_login_dialog(page: Any, log: Callable[[str], None]) -> None:
     """Mở dialog Đăng nhập: chờ btn-signin (2 element desktop+mobile), click
-    element visible, chờ #login-form."""
-    try:
-        await page.wait_for_selector(
-            '[data-id="btn-signin"]', state="attached", timeout=30000
-        )
-        clicked = await page.evaluate(
-            """() => {
-                const els = [...document.querySelectorAll('[data-id="btn-signin"]')];
-                const el = els.find(e => e.offsetParent !== null);
-                if (!el) return false;
-                el.click();
-                return true;
-            }"""
-        )
-        if not clicked:
-            raise VoteError("btn-signin không tồn tại trên trang")
-        await page.wait_for_selector("#login-form", state="visible", timeout=10000)
-    except VoteError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise VoteError(f"không mở được dialog Đăng nhập: {exc}") from exc
-    log("● Mở dialog Đăng nhập")
+    element visible, chờ #login-form.
+
+    Nếu site load chậm qua proxy (30s chưa render btn-signin) → reload 1 lần
+    rồi retry — giảm lỗi "không mở được dialog" thay vì fail thẳng.
+    """
+    for attempt in range(2):
+        try:
+            await page.wait_for_selector(
+                '[data-id="btn-signin"]', state="attached", timeout=30000
+            )
+            clicked = await page.evaluate(
+                """() => {
+                    const els = [...document.querySelectorAll('[data-id="btn-signin"]')];
+                    const el = els.find(e => e.offsetParent !== null);
+                    if (!el) return false;
+                    el.click();
+                    return true;
+                }"""
+            )
+            if not clicked:
+                raise VoteError("btn-signin không tồn tại trên trang")
+            await page.wait_for_selector("#login-form", state="visible", timeout=10000)
+            log("● Mở dialog Đăng nhập")
+            return
+        except VoteError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if attempt == 0:
+                log(f"● btn-signin chưa hiện sau 30s ({str(exc)[:80]}) — reload lại 1 lần")
+                try:
+                    await page.reload(wait_until="domcontentloaded", timeout=60000)
+                    continue
+                except Exception as exc2:  # noqa: BLE001
+                    raise VoteError(f"không mở được dialog Đăng nhập: {exc2}") from exc2
+            raise VoteError(f"không mở được dialog Đăng nhập: {exc}") from exc
 
 
 async def _do_login(
@@ -352,15 +374,20 @@ async def _click_vote_package(page: Any, log: Callable[[str], None]) -> None:
 
 
 async def _open_video(page: Any, log: Callable[[str], None]) -> None:
-    """Bấm "Xem video nhận lượt bình chọn" → chờ video dialog → bấm "Phát video"."""
-    deadline = time.monotonic() + 15.0
+    """Bấm "Xem video nhận lượt bình chọn" → chờ video dialog → bấm "Phát video".
+
+    Tối ưu speed: poll 10s (0.8s/lần). Nếu nút video không hiện mà popup chuyển
+    sang panel "Chuyển đổi ngay" / "Không đủ lượt bình chọn" → báo rõ tài khoản
+    hết lượt vote free (không phải lỗi kỹ thuật).
+    """
+    deadline = time.monotonic() + 10.0
     clicked = False
     while time.monotonic() < deadline:
         clicked = await page.evaluate(
-            """() => {
+            "() => { " + _VISIBLE_FN + """
                 const btn = [...document.querySelectorAll('button')].find(
-                    b => b.innerText.includes('Xem video nhận lượt bình chọn')
-                      && b.offsetParent !== null
+                    b => __ceVisible(b)
+                      && (b.innerText || '').includes('Xem video nhận lượt bình chọn')
                 );
                 if (!btn) return false;
                 btn.click();
@@ -369,14 +396,38 @@ async def _open_video(page: Any, log: Callable[[str], None]) -> None:
         )
         if clicked:
             break
-        await asyncio.sleep(1.0)
+        # Chẩn đoán nhanh: tài khoản hết lượt → popup đổi email / nút xám.
+        state = await page.evaluate(
+            "() => { " + _VISIBLE_FN + """
+                const btns = [...document.querySelectorAll('button')].filter(__ceVisible);
+                const texts = btns.map(b => b.innerText || '');
+                for (const t of texts) {
+                    if (t.includes('Cập nhật sau')) return 'already-voted:' + t;
+                }
+                if (btns.some(b => (b.innerText || '').includes('Chuyển đổi ngay'))) return 'change-panel';
+                if (btns.some(b => (b.innerText || '').includes('Không đủ lượt bình chọn'))) return 'no-votes';
+                return '';
+            }"""
+        )
+        if state.startswith("already-voted"):
+            raise AlreadyVotedError(
+                f"đã vote hôm nay — {state.split(':', 1)[1][:60]} (không vote lại)"
+            )
+        if state == "change-panel":
+            raise VoteError(
+                "tài khoản hết lượt vote free — popup yêu cầu đổi email "
+                "(Chuyển đổi ngay). Dùng account có lượt hoặc chạy Đổi Email trước."
+            )
+        if state == "no-votes":
+            raise VoteError("tài khoản không đủ lượt bình chọn — hết lượt vote free")
+        await asyncio.sleep(0.8)
     if not clicked:
         raise VoteError("không tìm thấy nút 'Xem video nhận lượt bình chọn'")
     log("● Bấm Xem video nhận lượt bình chọn")
 
     try:
         await page.wait_for_selector(
-            'button[aria-label="Phát video"]', state="visible", timeout=15000
+            'button[aria-label="Phát video"]', state="visible", timeout=10000
         )
     except Exception as exc:  # noqa: BLE001
         raise VoteError(f"video dialog không mở: {exc}") from exc
@@ -384,7 +435,7 @@ async def _open_video(page: Any, log: Callable[[str], None]) -> None:
         await page.locator('button[aria-label="Phát video"]').click(timeout=10000)
     except Exception as exc:  # noqa: BLE001
         raise VoteError(f"không bấm được Phát video: {exc}") from exc
-    log("● Phát video — chờ 30s countdown...")
+    log("● Phát video — chờ countdown xong...")
 
     # YouTube embed autoplay=0 → cần click chuột thật vào player để phát.
     # Nếu click fail, `_wait_video_done` sẽ retry click mỗi 10s.
@@ -463,14 +514,25 @@ async def _confirm_vote(page: Any, log: Callable[[str], None]) -> dict[str, Any]
     (vote cho ai, điểm, lượt còn lại) hoặc None nếu không bắt được.
     """
     captured: dict[str, Any] = {}
+    seen_urls: list[str] = []
 
     def _on_response(resp: Any) -> None:
-        if _VOTING_FREE_MARKER not in (resp.url or ""):
+        url = resp.url or ""
+        if "voting" not in url:
+            return
+        seen_urls.append(url.split("?")[0])
+        if _VOTING_FREE_MARKER not in url:
             return
         try:
             body = resp.json()
-        except Exception:  # noqa: BLE001
-            return
+        except Exception:  # noqa: BLE001 — thử text fallback
+            try:
+                text = resp.text()
+                import json as _json
+
+                body = _json.loads(text)
+            except Exception:  # noqa: BLE001
+                return
         if not isinstance(body, dict) or body.get("errorCode") != 0:
             return
         captured["body"] = body
@@ -512,7 +574,8 @@ async def _confirm_vote(page: Any, log: Callable[[str], None]) -> dict[str, Any]
         summary = _format_vote_result(result)
         log(f"✓ Bình chọn thành công — {summary}" if summary else "✓ Bình chọn thành công")
     else:
-        log("✓ Bình chọn thành công (không bắt được response API vote)")
+        extra = f" — thấy API: {seen_urls[:3]}" if seen_urls else ""
+        log(f"✓ Bình chọn thành công (không bắt được response voting-free{extra})")
     return result
 
 
@@ -673,6 +736,11 @@ class VoteManager:
         self._category: str = _DEFAULT_CATEGORY
         self._confirm_vote: bool = False
         self._min_seconds: float = _DEFAULT_MIN_SECONDS
+        # Auto-retry lỗi transient (timeout/proxy/video/modal) — đưa lại queue.
+        self._auto_retry: bool = True
+        self._auto_retry_max: int = 3
+        self._auto_retry_delay: float = 15.0
+        self._delayed_requeue_tasks: dict[str, asyncio.Task] = {}
 
         self.jobs: dict[str, VoteJob] = {}
         self.order: list[str] = []
@@ -866,6 +934,15 @@ class VoteManager:
 
     def add_jobs(self, combos: list[str]) -> list[VoteJob]:
         existing = {j.email.lower() for j in self.jobs.values() if j.status != "cancelled"}
+        # Skip account đã vote thành công HÔM NAY (reset tự nhiên qua 00:00).
+        today_iso = datetime.now().replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            voted_today = self._vote_repo().success_emails_since(today_iso)
+        except Exception as exc:  # noqa: BLE001 — DB lỗi thì không chặn
+            _log.warning("vote daily check fail: %s", exc)
+            voted_today = set()
         out: list[VoteJob] = []
         for raw in combos:
             line = raw.strip()
@@ -897,6 +974,19 @@ class VoteManager:
                 self._broadcast_job(job)
                 out.append(job)
                 continue
+            if email.lower() in voted_today:
+                jid = uuid.uuid4().hex[:12]
+                job = VoteJob(
+                    id=jid, email=email,
+                    status="error",
+                    error="đã vote thành công hôm nay — không vote lại (reset 00:00)",
+                    finished_at=time.time(),
+                )
+                self.jobs[jid] = job
+                self.order.append(jid)
+                self._broadcast_job(job)
+                out.append(job)
+                continue
             existing.add(email.lower())
             jid = uuid.uuid4().hex[:12]
             job = VoteJob(
@@ -908,6 +998,7 @@ class VoteManager:
             self.jobs[jid] = job
             self.order.append(jid)
             self._job_queue.put_nowait(jid)
+            self._persist_job(job, status="queued")
             self._broadcast_job(job)
             out.append(job)
         self._ensure_workers()
@@ -919,6 +1010,7 @@ class VoteManager:
             if job.status == "queued":
                 job.status = "cancelled"
                 job.finished_at = time.time()
+                self._persist_job(job, status="cancelled")
                 self._broadcast_job(job)
                 stopped += 1
         for task in list(self._tasks.values()):
@@ -1023,12 +1115,117 @@ class VoteManager:
 
     # ── Job runner ─────────────────────────────────────────────────────
 
+    def _vote_repo(self):
+        from db import get_engine, get_vote_repo
+
+        return get_vote_repo(get_engine())
+
+    def _persist_job(self, job: VoteJob, *, status: str) -> None:
+        """Write-through lịch sử vote vào DB (best-effort)."""
+        try:
+            self._vote_repo().upsert(
+                job.id,
+                job.email,
+                status=status,
+                error=job.error,
+                engine=job.engine,
+                proxy_used=job._proxy_used,
+                public_ip=job._public_ip,
+                vote_result=job.vote_result,
+                started_at=(
+                    datetime.fromtimestamp(job.started_at).strftime("%Y-%m-%dT%H:%M:%S")
+                    if job.started_at else None
+                ),
+                finished_at=(
+                    datetime.fromtimestamp(job.finished_at).strftime("%Y-%m-%dT%H:%M:%S")
+                    if job.finished_at else None
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("vote persist fail: %s", exc)
+
+    def list_history(self, *, limit: int = 5000) -> list[dict[str, Any]]:
+        """Lịch sử vote từ DB — mới nhất trước."""
+        try:
+            return self._vote_repo().list_all(limit=limit)
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("vote history load fail: %s", exc)
+            return []
+
+    # ── Auto-retry helpers ─────────────────────────────────────────────
+    # Lỗi FIX cứng — retry cũng vô ích (sai mật khẩu / account hết lượt vĩnh viễn).
+    _NO_RETRY_KEYS = (
+        "mật khẩu không đúng",
+        "sai mật khẩu",
+        "không tồn tại",
+        "không chính xác",
+        "email hoặc mật khẩu",
+        "hết lượt vote free",
+        "đã được chuyển đổi",
+    )
+
+    def _is_fatal(self, error: str | None) -> bool:
+        if not error:
+            return False
+        low = error.lower()
+        return any(k.lower() in low for k in self._NO_RETRY_KEYS)
+
+    async def _maybe_auto_retry(self, job: VoteJob) -> bool:
+        if not self._auto_retry:
+            return False
+        if self._is_fatal(job.error):
+            self._job_log(job, "[auto-retry] lỗi cố định — không retry")
+            return False
+        if job.retry_count >= self._auto_retry_max:
+            self._job_log(
+                job, f"[auto-retry] đã retry {job.retry_count}/{self._auto_retry_max} — dừng"
+            )
+            return False
+        job.retry_count += 1
+        delay = self._auto_retry_delay * job.retry_count
+        self._job_log(
+            job,
+            f"[auto-retry] đưa lại queue lần {job.retry_count}/{self._auto_retry_max} "
+            f"sau {delay:.0f}s",
+        )
+        job.status = "queued"
+        job.error = None
+        job.started_at = None
+        job.finished_at = None
+        self._broadcast_job(job)
+        self._schedule_delayed_requeue(job.id, delay)
+        return True
+
+    def _schedule_delayed_requeue(self, job_id: str, delay: float) -> None:
+        async def _runner() -> None:
+            try:
+                await asyncio.sleep(delay)
+                job = self.jobs.get(job_id)
+                if job is None or job.status != "queued":
+                    return
+                self._job_queue.put_nowait(job_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover
+                _log.error("vote delayed requeue %s failed: %s", job_id, exc)
+
+        existing = self._delayed_requeue_tasks.get(job_id)
+        if existing and not existing.done():
+            existing.cancel()
+        task = asyncio.create_task(_runner())
+        self._delayed_requeue_tasks[job_id] = task
+        task.add_done_callback(
+            lambda _t, jid=job_id: self._delayed_requeue_tasks.pop(jid, None)
+            if self._delayed_requeue_tasks.get(jid) is _t else None
+        )
+
     async def _run_job(self, job: VoteJob) -> None:
         job.status = "running"
         job.started_at = time.time()
         start_mono = time.monotonic()
         self._broadcast_job(job)
         self._job_log(job, "● Bắt đầu job")
+        self._persist_job(job, status="running")
 
         proxy: str | None = None
         if self._use_proxy:
@@ -1054,19 +1251,31 @@ class VoteManager:
             job.error = f"job timeout sau {int(self._job_timeout)}s"
             job.status = "error"
             self._job_log(job, f"✗ {job.error}")
+            await self._handle_browser_failure(job, TimeoutError(job.error))
+            await self._maybe_auto_retry(job)
+        except AlreadyVotedError as exc:
+            # Đã vote hôm nay → coi như success, không retry.
+            job.status = "success"
+            job.error = None
+            self._job_log(job, f"✓ {exc}")
         except VoteError as exc:
             job.error = _short_error(str(exc))
             job.status = "error"
             self._job_log(job, f"✗ {job.error}")
+            await self._handle_browser_failure(job, exc)
+            await self._maybe_auto_retry(job)
         except EventistaError as exc:
             job.error = _short_error(str(exc))
             job.status = "error"
             self._job_log(job, f"✗ {job.error}")
+            await self._handle_browser_failure(job, exc)
+            await self._maybe_auto_retry(job)
         except Exception as exc:  # noqa: BLE001
             await self._handle_browser_failure(job, exc)
             job.error = _short_error(f"{type(exc).__name__}: {exc}")
             job.status = "error"
             self._job_log(job, f"✗ {job.error}")
+            await self._maybe_auto_retry(job)
         else:
             # Proxy xoay IP mỗi 60s → job qua proxy phải kéo dài tối thiểu
             # min_seconds để account kế tiếp không dính cùng IP. Chỉ gate khi
@@ -1087,6 +1296,9 @@ class VoteManager:
         finally:
             job.finished_at = time.time()
             self._broadcast_job(job)
+            # Lịch sử DB: trạng thái cuối (success/error/cancelled...).
+            if job.status != "running":
+                self._persist_job(job, status=job.status)
 
     async def _handle_browser_failure(self, job: VoteJob, exc: Exception) -> None:
         """Lỗi browser/network → mark proxy chết (reuse cơ chế Eventista/Reg)."""

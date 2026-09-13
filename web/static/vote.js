@@ -37,6 +37,7 @@
     errorPane: document.getElementById('vt-error-pane'),
     logTarget: document.getElementById('vt-log-target'),
     logPane: document.getElementById('vt-log-pane'),
+    voteInfo: document.getElementById('vt-vote-info'),
   };
 
   let _state = { jobs: [] };
@@ -262,9 +263,50 @@
     } else {
       _state.jobs[idx] = { ..._state.jobs[idx], ...update };
     }
-    render();
+    if (update.vote_result) renderVoteInfo(update.vote_result);
+    scheduleRender();
     if (_selectedJobId === update.id) renderLogPane();
-    refreshOutputs();
+    scheduleRefreshOutputs();
+  }
+
+  // ── Debounce render/outputs — nhiều job không làm UI freeze (giống Đổi Email) ──
+  // Mỗi job event (SSE) sẽ trigger render lại toàn bộ list; bắn hàng trăm event
+  // liên tục = hàng trăm lần rebuild DOM → gom lại 1 lần sau mỗi 150ms.
+  let _renderTimer = null;
+  let _outputsTimer = null;
+
+  function scheduleRender() {
+    if (_renderTimer) return;
+    _renderTimer = setTimeout(() => {
+      _renderTimer = null;
+      render();
+    }, 150);
+  }
+
+  function scheduleRefreshOutputs() {
+    if (_outputsTimer) return;
+    _outputsTimer = setTimeout(() => {
+      _outputsTimer = null;
+      refreshOutputs();
+    }, 400);
+  }
+
+  function flushPending() {
+    if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; render(); }
+    if (_outputsTimer) { clearTimeout(_outputsTimer); _outputsTimer = null; refreshOutputs(); }
+  }
+
+  // ── Vote info panel (data từ API voting-free, decode extraData) ──
+  function renderVoteInfo(vr) {
+    if (!vr || !dom.voteInfo) return;
+    let text = `Vote info: ${vr.product || '?'} +${vr.point ?? 0}đ`;
+    if (vr.total_point != null) text += ` | tổng ${vr.total_point}`;
+    if (vr.current_point != null) text += ` (trước ${vr.current_point})`;
+    if (vr.remaining_free_votes != null) text += ` | còn ${vr.remaining_free_votes} lượt free`;
+    if (vr.next_vote_in_seconds != null) text += ` | vote lại sau ${vr.next_vote_in_seconds}s`;
+    if (vr.event) text += ` | ${vr.event}`;
+    dom.voteInfo.textContent = text;
+    dom.voteInfo.title = JSON.stringify(vr, null, 2);
   }
 
   // ── Actions ───────────────────────────────────────────────────────
@@ -279,8 +321,20 @@
     dom.btnRun.disabled = true;
     dom.btnRun.textContent = 'Đang thêm job...';
     try {
-      await api('/api/vote/jobs', { method: 'POST', body: JSON.stringify({ combos }) });
-      window.GptUi.toast?.('Jobs đã được thêm vào queue', { type: 'success' });
+      const res = await api('/api/vote/jobs', { method: 'POST', body: JSON.stringify({ combos }) });
+      // Merge jobs từ response — đảm bảo list đủ job kể cả khi SSE drop event
+      // lúc bắn burst (queue 1000).
+      if (Array.isArray(res.jobs)) {
+        const known = new Set(_state.jobs.map((j) => j.id));
+        for (const j of res.jobs) {
+          if (!known.has(j.id)) {
+            _state.jobs.push(j);
+            if (j.vote_result) renderVoteInfo(j.vote_result);
+          }
+        }
+        flushPending();
+      }
+      window.GptUi.toast?.(`Đã thêm ${res.added} job vào queue`, { type: 'success' });
     } catch (err) {
       window.GptUi.toast?.(err.message, { type: 'error' });
     } finally {

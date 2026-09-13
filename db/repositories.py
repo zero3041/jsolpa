@@ -3295,6 +3295,106 @@ class ChangeEmailRepository:
             raise RepositoryError("change_email_delete", exc) from exc
 
 
+class VoteJobRepository:
+    """Data access cho `vote_jobs` table (Auto Vote tab).
+
+    Lịch sử bình chọn: queued → running → success / error / cancelled,
+    kèm vote_result (JSON decode từ extraData của API voting-free).
+    """
+
+    def __init__(self, engine: "DatabaseEngine") -> None:
+        self._engine = engine
+
+    def upsert(
+        self,
+        job_id: str,
+        email: str,
+        *,
+        status: str,
+        error: str | None = None,
+        engine: str | None = None,
+        proxy_used: str | None = None,
+        public_ip: str | None = None,
+        vote_result: dict | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        """Insert hoặc update row theo job_id (PRIMARY KEY)."""
+        import json as _json
+
+        try:
+            with self._engine.get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO vote_jobs
+                        (id, email, status, error, engine, proxy_used, public_ip,
+                         vote_result, started_at, finished_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        email = excluded.email,
+                        status = excluded.status,
+                        error = excluded.error,
+                        engine = excluded.engine,
+                        proxy_used = excluded.proxy_used,
+                        public_ip = excluded.public_ip,
+                        vote_result = excluded.vote_result,
+                        started_at = excluded.started_at,
+                        finished_at = excluded.finished_at
+                    """,
+                    (
+                        job_id, email, status, error, engine, proxy_used,
+                        public_ip,
+                        _json.dumps(vote_result, ensure_ascii=False)
+                        if vote_result else None,
+                        started_at, finished_at,
+                    ),
+                )
+        except Exception as exc:
+            raise RepositoryError("vote_upsert", exc) from exc
+
+    def list_all(self, *, limit: int = 5000, offset: int = 0) -> list[dict]:
+        """List mới nhất trước."""
+        conn = self._engine.raw_connection()
+        rows = conn.execute(
+            "SELECT * FROM vote_jobs ORDER BY created_at DESC, id DESC "
+            "LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            if d.get("vote_result"):
+                try:
+                    import json as _json
+
+                    d["vote_result"] = _json.loads(d["vote_result"])
+                except Exception:  # noqa: BLE001
+                    d["vote_result"] = None
+            out.append(d)
+        return out
+
+    def get(self, job_id: str) -> dict | None:
+        """Lấy job theo id."""
+        conn = self._engine.raw_connection()
+        row = conn.execute(
+            "SELECT * FROM vote_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def success_emails_since(self, iso_start: str) -> set[str]:
+        """Email đã vote thành công từ mốc thời gian (ISO 'YYYY-MM-DDTHH:MM:SS').
+
+        Dùng để skip account đã vote hôm nay — mốc 00:00 → tự reset qua 24h00.
+        """
+        conn = self._engine.raw_connection()
+        rows = conn.execute(
+            "SELECT email FROM vote_jobs "
+            "WHERE status = 'success' AND finished_at >= ?",
+            (iso_start,),
+        ).fetchall()
+        return {str(r[0]).lower() for r in rows}
+
+
 # ---------------------------------------------------------------------------
 # SettingsRepository — Unified settings store (unified-settings-store spec)
 # ---------------------------------------------------------------------------

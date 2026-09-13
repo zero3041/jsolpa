@@ -2631,6 +2631,12 @@ async def get_vote_outputs() -> JSONResponse:
     return JSONResponse(vm.list_outputs())
 
 
+@app.get("/api/vote/history")
+async def get_vote_history() -> JSONResponse:
+    vm = get_vote_manager()
+    return JSONResponse({"history": vm.list_history()})
+
+
 @app.get("/api/vote/jobs/{job_id}")
 async def get_vote_job(job_id: str) -> JSONResponse:
     vm = get_vote_manager()

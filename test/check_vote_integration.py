@@ -5,11 +5,15 @@ của server.py và vote.js.
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 
 sys.path.insert(0, ".")
 
 from web.vote import (  # noqa: E402
+    AlreadyVotedError,
+    VoteError,
+    VoteJob,
     VoteManager,
     _build_vote_result,
     _decode_vote_extra,
@@ -120,6 +124,33 @@ def main() -> None:
     _validate_type_constraint("vote.category", "THE GROUP PERFORMANCE ICON")
     _validate_type_constraint("vote.category", "")
 
+    # 3d. Daily skip: account đã vote success hôm nay → error job, không vào queue
+    class _NoWorkerVoteManager(VoteManager):
+        def _ensure_workers(self) -> None:
+            pass
+
+    vm2 = _NoWorkerVoteManager()
+    vm2._vote_repo = lambda: type("R", (), {
+        "success_emails_since": lambda self, iso: {"votedtoday@outlook.com"},
+        "upsert": lambda *a, **k: None,
+        "list_all": lambda *a, **k: [],
+    })()
+    jobs2 = vm2.add_jobs([
+        "votedtoday@outlook.com|pw1",
+        "freshtoday@outlook.com|pw2",
+    ])
+    assert len(jobs2) == 2, jobs2
+    by_email = {j.email: j for j in jobs2}
+    assert by_email["votedtoday@outlook.com"].status == "error"
+    assert "đã vote" in (by_email["votedtoday@outlook.com"].error or "")
+    assert by_email["freshtoday@outlook.com"].status == "queued"
+
+    # 3e. AlreadyVotedError → success (không retry); VoteError transient → auto-retry
+    asyncio.run(_check_runner_paths())
+
+    print("PASS: web.vote + web.server routes OK")
+    print(f"  config: {cfg}")
+
     # 4. Import web.server → mọi route đăng ký OK (no import error)
     import web.server  # noqa: F401
 
@@ -132,14 +163,72 @@ def main() -> None:
         "/api/vote/jobs/clear-all",
         "/api/vote/jobs/retry-failed",
         "/api/vote/outputs",
+        "/api/vote/history",
         "/api/vote/jobs/{job_id}",
         "/api/vote/jobs/{job_id}/retry",
         "/api/vote/config",
     ):
         assert expected in paths, f"route thiếu: {expected}"
 
-    print("PASS: web.vote + web.server routes OK")
-    print(f"  config: {cfg}")
+
+async def _check_runner_paths() -> None:
+    from web.vote import AlreadyVotedError, VoteError, VoteJob, VoteManager
+
+    class _NoWorker(VoteManager):
+        def _ensure_workers(self) -> None:
+            pass
+
+    def _mk_cm() -> _NoWorker:
+        cm = _NoWorker()
+        cm._use_proxy = False
+        cm._vote_repo = lambda: type("R", (), {
+            "upsert": lambda *a, **k: None,
+            "list_all": lambda *a, **k: [],
+        })()
+        return cm
+
+    # AlreadyVotedError → success
+    cm = _mk_cm()
+    job = VoteJob(id="a1", email="a@outlook.com", _password="pw")
+    cm.jobs[job.id] = job
+    cm.order.append(job.id)
+
+    async def _already(job, *, proxy):
+        raise AlreadyVotedError("đã vote hôm nay — Cập nhật sau 05:37:40")
+
+    cm._run_job_inner = _already  # type: ignore[method-assign]
+    await cm._run_job(job)
+    assert job.status == "success", job.status
+    assert job.retry_count == 0, job.retry_count
+
+    # VoteError transient (video timeout) → auto-retry requeue
+    cm2 = _mk_cm()
+    job2 = VoteJob(id="a2", email="b@outlook.com", _password="pw")
+    cm2.jobs[job2.id] = job2
+    cm2.order.append(job2.id)
+
+    async def _video_fail(job, *, proxy):
+        raise VoteError("video không hoàn thành trong 60s")
+
+    cm2._run_job_inner = _video_fail  # type: ignore[method-assign]
+    await cm2._run_job(job2)
+    assert job2.status == "queued", job2.status
+    assert job2.retry_count == 1, job2.retry_count
+    assert "auto-retry" in "\n".join(job2.log_lines)
+
+    # Lỗi fatal (sai mật khẩu) → KHÔNG retry
+    cm3 = _mk_cm()
+    job3 = VoteJob(id="a3", email="c@outlook.com", _password="pw")
+    cm3.jobs[job3.id] = job3
+    cm3.order.append(job3.id)
+
+    async def _bad_pw(job, *, proxy):
+        raise VoteError("đăng nhập fail: 'mật khẩu không đúng'")
+
+    cm3._run_job_inner = _bad_pw  # type: ignore[method-assign]
+    await cm3._run_job(job3)
+    assert job3.status == "error", job3.status
+    assert job3.retry_count == 0, job3.retry_count
 
 
 if __name__ == "__main__":
